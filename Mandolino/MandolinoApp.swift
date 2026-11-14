@@ -1,0 +1,175 @@
+import SwiftUI
+
+@main
+struct MandolinoApp: App {
+    init() {
+        if ProcessInfo.processInfo.arguments.contains("-UITestEnglish") {
+            UserDefaults.standard.set("en", forKey: "appLanguage")
+        } else if ProcessInfo.processInfo.arguments.contains("-UITestGerman") {
+            UserDefaults.standard.set("de", forKey: "appLanguage")
+        }
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            GalleryView()
+                .preferredColorScheme(.light)
+                .tint(Theme.teal)
+        }
+    }
+}
+
+enum Theme {
+    static let cream = Color(red: 0.99, green: 0.97, blue: 0.93)
+    static let ink = Color(red: 0.17, green: 0.23, blue: 0.28)
+    static let teal = Color(red: 0.08, green: 0.48, blue: 0.46)
+    static let peach = Color(red: 1, green: 0.79, blue: 0.65)
+}
+
+struct GalleryView: View {
+    @AppStorage("appLanguage") private var language = "de"
+    @State private var difficulty: Difficulty = .easy
+    @State private var selectedPage: Page?
+
+    struct Page: Identifiable {
+        let template: MandalaTemplate?
+        var id: String { template?.id ?? "free-draw" }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Mandolino")
+                                .font(.system(size: 44, weight: .heavy, design: .rounded))
+                                .foregroundStyle(Theme.ink)
+                            Text(L.text("Little spaces. Big imagination."))
+                                .font(.system(size: 19, weight: .medium, design: .rounded))
+                                .foregroundStyle(Theme.ink.opacity(0.65))
+                        }
+                        Picker(L.text("Language"), selection: $language) {
+                            Text("Deutsch").tag("de")
+                            Text("English").tag("en")
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 260)
+                        .accessibilityIdentifier("language-switcher")
+                        Spacer()
+                        Image(systemName: "sun.max.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(Color.orange)
+                            .padding(12)
+                            .background(Theme.peach.opacity(0.4), in: Circle())
+                    }
+
+                    Button { selectedPage = Page(template: nil) } label: {
+                        HStack(spacing: 20) {
+                            Image(systemName: "pencil.and.scribble")
+                                .font(.system(size: 42, weight: .medium))
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(L.text("Make your own magic"))
+                                    .font(.system(size: 25, weight: .bold, design: .rounded))
+                                Text(L.text("Draw lines & shapes, then fill them with color."))
+                                    .font(.system(size: 17, design: .rounded))
+                            }
+                            Spacer()
+                            Image(systemName: "arrow.right.circle.fill").font(.system(size: 34))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(26)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Theme.teal.gradient, in: RoundedRectangle(cornerRadius: 26))
+                    }
+                    .accessibilityIdentifier("free-draw")
+
+                    HStack {
+                        Text(L.text("Pick a coloring page"))
+                            .font(.system(size: 25, weight: .bold, design: .rounded))
+                        Spacer()
+                        Text(L.text("Your colors save automatically"))
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundStyle(Theme.ink.opacity(0.6))
+                    }
+                    Picker(L.text("Difficulty"), selection: $difficulty) {
+                        ForEach(Difficulty.allCases) { level in
+                            Text(level.title).tag(level)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("difficulty")
+
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 20),
+                                             count: geometry.size.width > 1000 ? 4 : 2), spacing: 20) {
+                        ForEach(MandalaTemplate.all.filter { $0.difficulty == difficulty }) { template in
+                            Button { selectedPage = Page(template: template) } label: {
+                                TemplateCard(template: template)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(template.localizedTitle), \(template.difficulty.title)")
+                            .accessibilityIdentifier("template-\(template.id)")
+                        }
+                    }
+                    HStack(spacing: 8) {
+                        Image(systemName: "heart.fill").foregroundStyle(.pink)
+                        Text(L.text("No ads. No accounts. Just you and your imagination."))
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundStyle(Theme.ink.opacity(0.65))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                }
+                .padding(32)
+                .frame(maxWidth: 1300)
+                .frame(maxWidth: .infinity)
+            }
+            .background(Theme.cream)
+        }
+        .fullScreenCover(item: $selectedPage) { page in
+            ColoringView(template: page.template)
+        }
+    }
+}
+
+struct TemplateCard: View {
+    let template: MandalaTemplate
+    @State private var preview: UIImage?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Group {
+                if let preview {
+                    Image(uiImage: preview).resizable().scaledToFit()
+                } else {
+                    Color.white.overlay { ProgressView() }
+                }
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .background(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(template.localizedTitle)
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                    Text(template.difficulty.title)
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundStyle(Theme.ink.opacity(0.55))
+                }
+                Spacer()
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Theme.teal)
+                    .padding(10)
+                    .background(Theme.teal.opacity(0.09), in: Circle())
+            }
+        }
+        .foregroundStyle(Theme.ink)
+        .padding(16)
+        .background(.white, in: RoundedRectangle(cornerRadius: 26))
+        .overlay { RoundedRectangle(cornerRadius: 26).stroke(Theme.ink.opacity(0.06)) }
+        .task {
+            preview = CanvasEngine(template: template, size: 300, restore: false).image
+        }
+    }
+}
