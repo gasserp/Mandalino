@@ -30,6 +30,7 @@ struct GalleryView: View {
     @AppStorage("appLanguage") private var language = "de"
     @State private var difficulty: Difficulty = .easy
     @State private var selectedPage: Page?
+    @State private var previewRevision = UUID()
 
     struct Page: Identifiable {
         let template: MandalaTemplate?
@@ -66,8 +67,9 @@ struct GalleryView: View {
 
                     Button { selectedPage = Page(template: nil) } label: {
                         HStack(spacing: 20) {
-                            Image(systemName: "pencil.and.scribble")
-                                .font(.system(size: 42, weight: .medium))
+                            ArtworkPreview(template: nil, revision: previewRevision)
+                                .frame(width: 96, height: 96)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(L.text("Make your own magic"))
                                     .font(.system(size: 25, weight: .bold, design: .rounded))
@@ -104,7 +106,7 @@ struct GalleryView: View {
                                              count: geometry.size.width > 1000 ? 4 : 2), spacing: 20) {
                         ForEach(MandalaTemplate.all.filter { $0.difficulty == difficulty }) { template in
                             Button { selectedPage = Page(template: template) } label: {
-                                TemplateCard(template: template)
+                                TemplateCard(template: template, previewRevision: previewRevision)
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("\(template.localizedTitle), \(template.difficulty.title)")
@@ -126,7 +128,7 @@ struct GalleryView: View {
             }
             .background(Theme.cream)
         }
-        .fullScreenCover(item: $selectedPage) { page in
+        .fullScreenCover(item: $selectedPage, onDismiss: { previewRevision = UUID() }) { page in
             ColoringView(template: page.template)
         }
     }
@@ -134,17 +136,11 @@ struct GalleryView: View {
 
 struct TemplateCard: View {
     let template: MandalaTemplate
-    @State private var preview: UIImage?
+    let previewRevision: UUID
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Group {
-                if let preview {
-                    Image(uiImage: preview).resizable().scaledToFit()
-                } else {
-                    Color.white.overlay { ProgressView() }
-                }
-            }
+            ArtworkPreview(template: template, revision: previewRevision)
             .aspectRatio(1, contentMode: .fit)
             .background(.white)
             .clipShape(RoundedRectangle(cornerRadius: 18))
@@ -168,8 +164,49 @@ struct TemplateCard: View {
         .padding(16)
         .background(.white, in: RoundedRectangle(cornerRadius: 26))
         .overlay { RoundedRectangle(cornerRadius: 26).stroke(Theme.ink.opacity(0.06)) }
-        .task {
-            preview = CanvasEngine(template: template, size: 300, restore: false).image
+    }
+}
+
+struct ArtworkPreview: View {
+    let template: MandalaTemplate?
+    let revision: UUID
+    @State private var preview: UIImage?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(Theme.ink)
+                    .padding(8)
+            } else if let preview {
+                Image(uiImage: preview).resizable().scaledToFit()
+            } else {
+                Color.white.overlay { ProgressView() }
+            }
         }
+        .background(.white)
+        .accessibilityIdentifier("preview-\(template?.id ?? "free-draw")")
+        .task(id: revision) {
+            do {
+                preview = try await PreviewRenderer.shared.image(for: template)
+                errorMessage = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+
+    }
+}
+
+private actor PreviewRenderer {
+    static let shared = PreviewRenderer()
+
+    func image(for template: MandalaTemplate?) throws -> UIImage {
+        try Task.checkCancellation()
+        return try CanvasEngine.preview(template: template)
     }
 }

@@ -17,6 +17,109 @@ final class CanvasEngineTests: XCTestCase {
         engine.endStroke()
     }
 
+    func testInteractivePaintingPerformance() {
+        let engine = CanvasEngine(template: MandalaTemplate.all[0], restore: false)
+        engine.beginStroke()
+        let start = Date()
+        for i in 0..<60 {
+            engine.draw(from: CGPoint(x: 0.1 + Double(i) * 0.01, y: 0.15),
+                        to: CGPoint(x: 0.11 + Double(i) * 0.01, y: 0.15),
+                        tool: .brush, width: 36, color: blue, glitterStyle: .diamond)
+        }
+        let elapsed = Date().timeIntervalSince(start)
+        print("PAINT_PERFORMANCE segment_ms=\(elapsed / 60 * 1000)")
+        XCTAssertLessThan(elapsed / 60, 1.0 / 60, "Drawing and compositing should fit a 60 Hz frame")
+        engine.endStroke()
+        let fillStart = Date()
+        engine.fill(at: CGPoint(x: 0.01, y: 0.01), color: red, glitterStyle: .diamond)
+        let fillTime = Date().timeIntervalSince(fillStart)
+        print("PAINT_PERFORMANCE fill_ms=\(fillTime * 1000)")
+        XCTAssertLessThan(fillTime, 0.15, "Large textured fills should respond without a noticeable stall")
+    }
+
+    func testEraserRubsOutDrawnLinesAndBrushPaintWithoutRemovingTemplate() {
+        let engine = CanvasEngine(template: MandalaTemplate.all[0], size: 200, restore: false)
+        let original = engine.lines
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.1, y: 0.15), to: CGPoint(x: 0.9, y: 0.15),
+                    tool: .pencil, width: 12)
+        engine.endStroke()
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.1, y: 0.15), to: CGPoint(x: 0.9, y: 0.15),
+                    tool: .brush, width: 36, color: red, glitterStyle: .ruby)
+        engine.endStroke()
+        let drawnLines = engine.lines, drawnPaint = engine.paint
+        XCTAssertNotEqual(drawnLines, original)
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.05, y: 0.15), to: CGPoint(x: 0.95, y: 0.15),
+                    tool: .eraser, width: 60)
+        engine.endStroke()
+        XCTAssertEqual(engine.lines, original)
+        XCTAssertTrue(engine.paint.allSatisfy { $0 == 255 })
+        XCTAssertTrue(engine.glitterMask.allSatisfy { $0 == 0 })
+        engine.undo()
+        XCTAssertEqual(engine.lines, drawnLines)
+        XCTAssertEqual(engine.paint, drawnPaint)
+        engine.redo()
+        XCTAssertEqual(engine.lines, original)
+        engine.beginStroke()
+        engine.draw(from: .zero, to: CGPoint(x: 1, y: 1), tool: .eraser, width: 80)
+        engine.endStroke()
+        XCTAssertEqual(engine.lines, original, "The eraser must never change the original mandala")
+    }
+
+    func testTappingDrawnOutlineErasesLocallyAndReopensFillBoundary() {
+        let engine = CanvasEngine(template: nil, size: 200, restore: false)
+        box(engine)
+        engine.erase(at: CGPoint(x: 0.2, y: 0.5), width: 36)
+        XCTAssertEqual(engine.lines[100 * 200 + 40], 255)
+        XCTAssertLessThan(engine.lines[40 * 200 + 100], 200)
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none)
+        XCTAssertEqual(pixel(engine, 0.1, 0.1), [red.red, red.green, red.blue])
+    }
+
+    func testGradientsUseConfiguredEndpointsAndRegionBoundsInEveryDirection() {
+        for direction in GradientDirection.allCases {
+            let engine = CanvasEngine(template: nil, size: 200, restore: false)
+            box(engine)
+            let options = PaintOptions(effect: .gradient, secondColor: blue, direction: direction)
+            engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none, options: options)
+            let a = pixel(engine, 0.23, 0.23), b = pixel(engine, 0.77, 0.77)
+            XCTAssertGreaterThan(a[0], b[0])
+            XCTAssertLessThan(a[2], b[2])
+            XCTAssertEqual(pixel(engine, 0.1, 0.1), [255, 255, 255])
+            let horizontal = pixel(engine, 0.25, 0.5), vertical = pixel(engine, 0.5, 0.25)
+            if direction == .horizontal { XCTAssertGreaterThan(horizontal[0], vertical[0]) }
+            if direction == .vertical { XCTAssertGreaterThan(vertical[0], horizontal[0]) }
+            let midpoint = pixel(engine, 0.5, 0.5)
+            XCTAssertEqual(Int(midpoint[0]), (Int(red.red) + Int(blue.red)) / 2, accuracy: 3)
+            engine.undo()
+            XCTAssertEqual(pixel(engine, 0.5, 0.5), [255, 255, 255])
+            engine.redo()
+            XCTAssertEqual(pixel(engine, 0.5, 0.5), midpoint)
+        }
+    }
+
+    func testPatternsAreDistinctClippedTwoColorAndWorkWithBrushAndGlitter() {
+        let engine = CanvasEngine(template: nil, size: 200, restore: false)
+        box(engine)
+        var textures = Set<Data>()
+        for effect in [PaintEffect.stripes, .dots, .checkerboard, .chevron] {
+            let options = PaintOptions(effect: effect, secondColor: blue)
+            engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none, options: options)
+            XCTAssertTrue(textures.insert(Data(engine.paint)).inserted)
+            let samples = (50..<150).flatMap { y in (50..<150).map { x in pixel(engine, CGFloat(x) / 200, CGFloat(y) / 200) } }
+            XCTAssertTrue(samples.contains([red.red, red.green, red.blue]))
+            XCTAssertTrue(samples.contains([blue.red, blue.green, blue.blue]))
+            XCTAssertEqual(pixel(engine, 0.1, 0.9), [255, 255, 255])
+            engine.beginStroke()
+            engine.draw(from: CGPoint(x: 0.05, y: 0.1), to: CGPoint(x: 0.9, y: 0.1),
+                        tool: .brush, width: 36, color: red, glitterStyle: .diamond, options: options)
+            engine.endStroke()
+            XCTAssertEqual(engine.glitterMask[20 * 200 + 100], GlitterStyle.diamond.rawValue)
+        }
+    }
+
     func testFillStaysWithinBlackOutlineAndGlitterCanBeRecolored() {
         let engine = CanvasEngine(template: nil, size: 150, restore: false)
         box(engine)
@@ -186,6 +289,132 @@ final class CanvasEngineTests: XCTestCase {
         let pink = PaintColor.mix(red, PaintColor.palette[19])
         XCTAssertGreaterThan(pink.green, red.green)
         XCTAssertGreaterThan(pink.blue, red.blue)
+    }
+
+    func testWeightedMixturesUseEveryIngredientAndRespectAmounts() {
+        let white = PaintColor.palette[19]
+        let black = PaintColor.palette[20]
+        let mixed = PaintColor.mix([(red, 2), (white, 3), (black, 5)])
+        XCTAssertEqual(mixed.red, UInt8((Double(red.red) * 0.2 + 255 * 0.3 + Double(black.red) * 0.5).rounded()))
+        XCTAssertEqual(mixed.green, UInt8((Double(red.green) * 0.2 + 255 * 0.3 + Double(black.green) * 0.5).rounded()))
+        XCTAssertEqual(mixed.blue, UInt8((Double(red.blue) * 0.2 + 255 * 0.3 + Double(black.blue) * 0.5).rounded()))
+        let reordered = PaintColor.mix([(black, 50), (red, 20), (white, 30)])
+        XCTAssertEqual([mixed.red, mixed.green, mixed.blue],
+                       [reordered.red, reordered.green, reordered.blue])
+        let mostlyRed = PaintColor.mix([(red, 99), (blue, 1)])
+        let mostlyBlue = PaintColor.mix([(red, 1), (blue, 99)])
+        XCTAssertGreaterThan(mostlyRed.red, mostlyBlue.red)
+        XCTAssertGreaterThan(mostlyBlue.blue, mostlyRed.blue)
+        let single = PaintColor.mix([(red, 42)])
+        XCTAssertEqual([single.red, single.green, single.blue], [red.red, red.green, red.blue])
+        let same = PaintColor.mix([(blue, 10), (blue, 90)])
+        XCTAssertEqual([same.red, same.green, same.blue], [blue.red, blue.green, blue.blue])
+    }
+
+    func testCrystalFinishesAreDistinctRecolorableAndUndoable() {
+        let engine = CanvasEngine(template: nil, size: 150, restore: false)
+        box(engine)
+        let lines = engine.lines
+        var textures = Set<Data>()
+        for style in GlitterStyle.allCases where style != .none {
+            engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: style)
+            XCTAssertTrue(textures.insert(Data(engine.paint)).inserted)
+            XCTAssertEqual(engine.glitterMask[75 * 150 + 75], style.rawValue)
+            XCTAssertFalse(engine.sparklePoints.isEmpty)
+            XCTAssertEqual(pixel(engine, 0.1, 0.1), [255, 255, 255])
+            let textured = engine.paint
+            engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: blue, glitterStyle: .none)
+            XCTAssertEqual(pixel(engine, 0.5, 0.5), [blue.red, blue.green, blue.blue])
+            XCTAssertTrue(engine.glitterMask.allSatisfy { $0 == 0 })
+            engine.undo()
+            XCTAssertEqual(engine.paint, textured)
+            XCTAssertEqual(engine.glitterMask[75 * 150 + 75], style.rawValue)
+        }
+        XCTAssertEqual(engine.lines, lines)
+    }
+
+    func testColoredFreestyleOnMandalaPreservesOutlinesAndHistory() {
+        let engine = CanvasEngine(template: MandalaTemplate.all[0], size: 200, restore: false)
+        let lines = engine.lines
+        let blank = engine.paint
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.1, y: 0.15), to: CGPoint(x: 0.4, y: 0.15),
+                    tool: .brush, width: 36, color: blue, glitterStyle: .diamond)
+        engine.endStroke()
+        XCTAssertEqual(engine.lines, lines)
+        XCTAssertEqual(engine.glitterMask[30 * 200 + 50], GlitterStyle.diamond.rawValue)
+        XCTAssertEqual(pixel(engine, 0.8, 0.85), [255, 255, 255])
+        let painted = engine.paint
+        XCTAssertNotEqual(painted, blank)
+        XCTAssertEqual(engine.undoCount, 1)
+        engine.undo()
+        XCTAssertEqual(engine.paint, blank)
+        XCTAssertTrue(engine.glitterMask.allSatisfy { $0 == 0 })
+        engine.redo()
+        XCTAssertEqual(engine.paint, painted)
+        engine.reset()
+        XCTAssertEqual(engine.lines, lines)
+        engine.undo()
+        XCTAssertEqual(engine.paint, painted)
+    }
+
+    func testSavedFreestyleAndActualPreviewRefresh() throws {
+        try verifySavedPreview(template: nil)
+        try verifySavedPreview(template: MandalaTemplate.all[0])
+    }
+
+    private func verifySavedPreview(template: MandalaTemplate?) throws {
+        let folder = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask,
+                                                appropriateFor: nil, create: true)
+            .appendingPathComponent("Drawings")
+        let url = folder.appendingPathComponent("\(template?.id ?? "free-draw").json")
+        let previous = FileManager.default.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        defer {
+            if let previous { try? previous.write(to: url, options: .atomic) }
+            else { try? FileManager.default.removeItem(at: url) }
+        }
+        let engine = CanvasEngine(template: template, restore: false)
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: blue, glitterStyle: .none,
+                    options: PaintOptions(effect: .gradient, secondColor: red, direction: .vertical))
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.1, y: 0.25), to: CGPoint(x: 0.4, y: 0.25),
+                    tool: .brush, width: 36, color: red, glitterStyle: .amethyst,
+                    options: PaintOptions(effect: .stripes, secondColor: blue))
+        engine.endStroke()
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.2, y: 0.25), to: CGPoint(x: 0.3, y: 0.25),
+                    tool: .eraser, width: 18)
+        engine.endStroke()
+        engine.save()
+        let restored = CanvasEngine(template: template)
+        XCTAssertNil(restored.errorMessage)
+        XCTAssertEqual(restored.paint, engine.paint)
+        XCTAssertEqual(restored.glitterMask, engine.glitterMask)
+        let first = try CanvasEngine.preview(template: template)
+        XCTAssertEqual(first.size.width, 300)
+        XCTAssertEqual(try renderedBytes(first), try renderedBytes(resized(engine.image)))
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.1, y: 0.75), to: CGPoint(x: 0.9, y: 0.75),
+                    tool: .brush, width: 36, color: blue)
+        engine.endStroke()
+        engine.save()
+        let second = try CanvasEngine.preview(template: template)
+        XCTAssertNotEqual(try renderedBytes(first), try renderedBytes(second))
+        XCTAssertEqual(try renderedBytes(second), try renderedBytes(resized(engine.image)))
+    }
+
+    private func resized(_ image: UIImage) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: CGSize(width: 300, height: 300), format: format).image { _ in
+            image.draw(in: CGRect(x: 0, y: 0, width: 300, height: 300))
+        }
+    }
+
+    private func renderedBytes(_ image: UIImage) throws -> Data {
+        let cgImage = try XCTUnwrap(image.cgImage)
+        return try XCTUnwrap(cgImage.dataProvider?.data) as Data
     }
 
     private func enclosedRegions(_ engine: CanvasEngine) -> Int {

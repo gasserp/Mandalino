@@ -8,7 +8,10 @@ struct ColoringView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var selectedColor = PaintColor.palette[0]
-    @State private var glitter = false
+    @State private var glitterStyle: GlitterStyle = .none
+    @State private var paintOptions = PaintOptions()
+    @State private var choosingStartColor = false
+    @State private var choosingEndColor = false
     @State private var tool: DrawingTool = .fill
     @State private var thickLines = false
     @State private var confirmReset = false
@@ -27,20 +30,19 @@ struct ColoringView: View {
                 if landscape {
                     HStack(alignment: .top, spacing: 20) {
                         canvas.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        ScrollView { controls }.frame(width: 245)
+                        ScrollView { controls }
+                            .accessibilityIdentifier("painting-controls")
+                            .frame(width: 245)
                     }
                 } else {
                     canvas.frame(maxWidth: .infinity, maxHeight: .infinity)
                     ScrollView {
-                        if template == nil {
-                            HStack(alignment: .top, spacing: 20) {
-                                drawingTools.frame(width: 245)
-                                colorControls
-                            }
-                        } else {
+                        HStack(alignment: .top, spacing: 20) {
+                            drawingTools.frame(width: 245)
                             colorControls
                         }
                     }
+                    .accessibilityIdentifier("painting-controls")
                     .frame(height: 450)
                 }
                 VStack(spacing: 3) {
@@ -56,6 +58,10 @@ struct ColoringView: View {
             .background(Theme.cream)
         }
         .onDisappear { engine.save() }
+        .onAppear { restoreFinish(for: selectedColor) }
+        .onChange(of: glitterStyle) { _, finish in
+            UserDefaults.standard.set(Int(finish.rawValue), forKey: finishKey(for: selectedColor))
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { engine.save() }
         }
@@ -75,8 +81,7 @@ struct ColoringView: View {
         }
         .sheet(isPresented: $mixing) {
             ColorMixer { color in
-                selectedColor = color
-                tool = .fill
+                select(color)
                 mixing = false
             }
         }
@@ -124,7 +129,9 @@ struct ColoringView: View {
         GeometryReader { geometry in
             let side = min(geometry.size.width, geometry.size.height)
             DrawingSurface(engine: engine, tool: tool, color: selectedColor,
-                           glitter: glitter, lineWidth: thickLines ? 12 : 6)
+                           glitterStyle: glitterStyle, paintOptions: paintOptions,
+                           lineWidth: tool == .brush || tool == .eraser ?
+                           (thickLines ? 36 : 18) : (thickLines ? 12 : 6))
                 .frame(width: side, height: side)
                 .background(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
@@ -140,7 +147,7 @@ struct ColoringView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if template == nil { drawingTools }
+            drawingTools
             colorControls
         }
     }
@@ -149,9 +156,12 @@ struct ColoringView: View {
         VStack(alignment: .leading, spacing: 16) {
                 Text(L.text("Create & color"))
                     .font(.system(size: 18, weight: .bold, design: .rounded))
-                HStack(spacing: 6) {
-                    ForEach(DrawingTool.allCases.filter { $0 != .eraser }) { item in
-                        Button { tool = item } label: {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                    ForEach(DrawingTool.allCases) { item in
+                        Button {
+                            tool = item
+                            if item == .eraser { engine.hint = "Tap to erase a space. Drag to rub out drawn lines and paint." }
+                        } label: {
                             Image(systemName: item.symbol)
                                 .font(.system(size: 20, weight: .medium))
                                 .frame(maxWidth: .infinity)
@@ -161,13 +171,24 @@ struct ColoringView: View {
                                             in: RoundedRectangle(cornerRadius: 12))
                         }
                         .accessibilityLabel(item.title)
-                        .accessibilityIdentifier("tool-\(item.rawValue)")
+                        .accessibilityAddTraits(tool == item ? .isSelected : [])
+                        .accessibilityIdentifier(item == .eraser ? "eraser" : "tool-\(item.rawValue)")
                     }
+                    Button { mixing = true } label: {
+                        Image(systemName: "paintpalette.fill")
+                            .font(.system(size: 20, weight: .medium))
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .accessibilityLabel(L.text("Mix colors"))
+                    .accessibilityIdentifier("mix-colors")
                 }
                 Toggle(L.text("Thick lines"), isOn: $thickLines)
                     .font(.system(size: 15, weight: .medium, design: .rounded))
                     .accessibilityIdentifier("thick-lines")
-                Text(L.text(tool.isPaintTool ? "Tap a closed space to fill it." :
+                Text(L.text(tool == .eraser ? "Tap to erase a space. Drag to rub out drawn lines and paint." :
+                                tool.isPaintTool ? "Tap a closed space to fill it." :
+                                tool == .brush ? "Draw freely with your selected color and glitter." :
                                 tool == .pencil ? "Drag on the paper to draw a line." :
                                 "Drag on the paper to draw a shape."))
                     .font(.system(size: 13, design: .rounded))
@@ -179,6 +200,7 @@ struct ColoringView: View {
 
     private var colorControls: some View {
         VStack(alignment: .leading, spacing: 16) {
+            paintEffects
             HStack {
                 Text(L.text("Color box"))
                     .font(.system(size: 19, weight: .bold, design: .rounded))
@@ -187,65 +209,155 @@ struct ColoringView: View {
                     .frame(width: 24, height: 24)
                     .overlay { Circle().stroke(Theme.ink.opacity(0.2)) }
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 10) {
-                ForEach(PaintColor.palette) { color in
-                    Button {
-                        selectedColor = color
-                        tool = .fill
-                    } label: {
-                        Circle()
-                            .fill(Color(uiColor: color.uiColor))
-                            .frame(height: 40)
-                            .overlay { Circle().stroke(Theme.ink.opacity(0.12), lineWidth: 1) }
-                            .overlay {
-                                if selectedColor.id == color.id {
-                                    Image(systemName: "checkmark")
-                                        .font(.system(size: 17, weight: .bold))
-                                        .foregroundStyle(color.id == 19 || color.id == 4 ? Theme.ink : .white)
+            ScrollView(.horizontal) {
+                Grid(horizontalSpacing: 8, verticalSpacing: 6) {
+                    ForEach(0..<2) { row in
+                        GridRow {
+                            ForEach(PaintColor.palette.filter { $0.id % 2 == row }) { color in
+                                Button {
+                                    select(color)
+                                } label: {
+                                    Circle()
+                                        .fill(Color(uiColor: color.uiColor))
+                                        .frame(width: 40, height: 40)
+                                        .overlay { Circle().stroke(Theme.ink.opacity(0.12), lineWidth: 1) }
+                                        .overlay {
+                                            if selectedColor.id == color.id {
+                                                Image(systemName: "checkmark")
+                                                    .font(.system(size: 17, weight: .bold))
+                                                    .foregroundStyle(Int(color.red) + Int(color.green) + Int(color.blue) > 560 ?
+                                                                     Theme.ink : .white)
+                                            }
+                                        }
+                                        .padding(3)
+                                        .overlay { Circle().stroke(selectedColor.id == color.id ? Theme.ink : .clear, lineWidth: 2) }
                                 }
+                                .accessibilityLabel(L.text(color.name))
+                                .accessibilityAddTraits(selectedColor.id == color.id ? .isSelected : [])
+                                .accessibilityIdentifier("color-\(color.id)")
                             }
-                            .padding(3)
-                            .overlay { Circle().stroke(selectedColor.id == color.id ? Theme.ink : .clear, lineWidth: 2) }
+                        }
                     }
-                    .accessibilityLabel(L.text(color.name))
-                    .accessibilityAddTraits(selectedColor.id == color.id ? .isSelected : [])
-                    .accessibilityIdentifier("color-\(color.id)")
                 }
             }
-            HStack(spacing: 10) {
-                Button {
-                    tool = tool == .eraser ? .fill : .eraser
-                    if tool == .eraser { engine.hint = "Tap a colored space to erase its color." }
-                } label: {
-                    Label(L.text("Eraser"), systemImage: "eraser.fill")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                        .foregroundStyle(tool == .eraser ? .white : Theme.teal)
-                        .background(tool == .eraser ? Theme.teal : .white,
-                                    in: RoundedRectangle(cornerRadius: 12))
-                }
-                .accessibilityIdentifier("eraser")
-                Button { mixing = true } label: {
-                    Label(L.text("Mix colors"), systemImage: "paintpalette.fill")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 12))
-                }
-                .accessibilityIdentifier("mix-colors")
-            }
-            Toggle(isOn: $glitter) {
-                Label(L.text("Sparkle"), systemImage: "sparkles")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
-            }
-            .padding(14)
-            .background(Theme.peach.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
-            .accessibilityIdentifier("sparkle")
-            Text("\(L.text(selectedColor.name))\(glitter ? " + \(L.text("Glitter"))" : "")")
+            .frame(height: 100)
+            .accessibilityIdentifier("color-palette")
+            Text("\(L.text(selectedColor.name))\(glitterStyle != .none ? " + \(glitterStyle.title)" : "")")
                 .font(.system(size: 14, weight: .medium, design: .rounded))
                 .foregroundStyle(Theme.ink.opacity(0.65))
         }
         .foregroundStyle(Theme.ink)
         .padding(4)
+    }
+
+    private var paintEffects: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L.text("Glitter type"))
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                ForEach(GlitterStyle.allCases) { finish in
+                    choice(finish.title, selected: glitterStyle == finish, id: "glitter-\(finish.rawValue)") {
+                        glitterStyle = finish
+                    }
+                }
+            }
+            Text(L.text("Paint style"))
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                ForEach(PaintEffect.allCases) { effect in
+                    choice(effect.title, selected: paintOptions.effect == effect, id: "effect-\(effect.rawValue)") {
+                        paintOptions.effect = effect
+                    }
+                }
+            }
+            if paintOptions.effect != .solid {
+                HStack {
+                    endpoint("From", color: selectedColor, id: "gradient-from") { choosingStartColor = true }
+                        .popover(isPresented: $choosingStartColor) {
+                            endpointPalette { color in
+                                select(color)
+                                choosingStartColor = false
+                            }
+                        }
+                    endpoint("To", color: paintOptions.secondColor, id: "gradient-to") { choosingEndColor = true }
+                        .popover(isPresented: $choosingEndColor) {
+                            endpointPalette { color in
+                                paintOptions.secondColor = color
+                                choosingEndColor = false
+                            }
+                        }
+                }
+                if paintOptions.effect == .gradient {
+                    Picker(L.text("Direction"), selection: $paintOptions.direction) {
+                        ForEach(GradientDirection.allCases) { direction in
+                            Text(direction.title).tag(direction)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("gradient-direction")
+                }
+            }
+        }
+    }
+
+    private func choice(_ title: String, selected: Bool, id: String,
+                        perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .foregroundStyle(selected ? .white : Theme.teal)
+                .background(selected ? Theme.teal : .white, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(id)
+    }
+
+    private func endpoint(_ title: String, color: PaintColor, id: String,
+                          perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            HStack(spacing: 6) {
+                Circle().fill(Color(uiColor: color.uiColor)).frame(width: 22, height: 22)
+                    .overlay { Circle().stroke(Theme.ink.opacity(0.2)) }
+                Text(L.text(title)).font(.system(size: 14, weight: .semibold, design: .rounded))
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(.white, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .accessibilityLabel("\(L.text(title)): \(L.text(color.name))")
+        .accessibilityIdentifier(id)
+    }
+
+    private func endpointPalette(select: @escaping (PaintColor) -> Void) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 10) {
+            ForEach(PaintColor.palette) { color in
+                Button { select(color) } label: {
+                    Circle().fill(Color(uiColor: color.uiColor)).frame(width: 42, height: 42)
+                        .overlay { Circle().stroke(Theme.ink.opacity(0.2)) }
+                }
+                .accessibilityLabel(L.text(color.name))
+                .accessibilityIdentifier("endpoint-color-\(color.id)")
+            }
+        }
+        .padding(16)
+        .frame(width: 290)
+    }
+
+    private func finishKey(for color: PaintColor) -> String {
+        "paint-finish-\(color.red)-\(color.green)-\(color.blue)"
+    }
+
+    private func restoreFinish(for color: PaintColor) {
+        let value = UserDefaults.standard.integer(forKey: finishKey(for: color))
+        glitterStyle = GlitterStyle.allCases.first { Int($0.rawValue) == value } ?? .none
+    }
+
+    private func select(_ color: PaintColor) {
+        selectedColor = color
+        restoreFinish(for: color)
+        if tool != .brush { tool = .fill }
     }
 }
 
@@ -253,7 +365,8 @@ struct DrawingSurface: UIViewRepresentable {
     @ObservedObject var engine: CanvasEngine
     let tool: DrawingTool
     let color: PaintColor
-    let glitter: Bool
+    let glitterStyle: GlitterStyle
+    let paintOptions: PaintOptions
     let lineWidth: CGFloat
 
     func makeUIView(context: Context) -> ZoomCanvas {
@@ -265,13 +378,16 @@ struct DrawingSurface: UIViewRepresentable {
         view.engine = engine
         view.tool = tool
         view.color = color
-        view.glitter = glitter
+        view.glitterStyle = glitterStyle
+        view.paintOptions = paintOptions
         view.lineWidth = lineWidth
         view.accessibilityLabel = L.text("Drawing canvas")
         view.accessibilityHint = L.text("Pinch to zoom. Move around with two fingers.")
-        view.image = engine.image
+        if view.image !== engine.image {
+            view.image = engine.image
+            view.setNeedsDisplay()
+        }
         view.updateSparkles(engine.sparklePoints)
-        view.setNeedsDisplay()
     }
 }
 
@@ -339,12 +455,15 @@ final class TouchCanvas: UIView {
     var image: UIImage?
     var tool: DrawingTool = .fill
     var color = PaintColor.palette[0]
-    var glitter = false
+    var glitterStyle: GlitterStyle = .none
+    var paintOptions = PaintOptions()
     var lineWidth: CGFloat = 6
     private var start: CGPoint?
     private var previous: CGPoint?
     private var sparklePoints: [CGPoint] = []
     private let sparkleLayer = CALayer()
+    private var sparkleSize = CGSize.zero
+    private var erasingStroke = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -362,6 +481,8 @@ final class TouchCanvas: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        guard sparkleSize != bounds.size else { return }
+        sparkleSize = bounds.size
         sparkleLayer.frame = bounds
         rebuildSparkles()
     }
@@ -381,6 +502,7 @@ final class TouchCanvas: UIView {
             }
             path.close()
             star.path = path.cgPath
+            star.shadowPath = path.cgPath
             star.position = CGPoint(x: point.x * bounds.width, y: point.y * bounds.height)
             star.fillColor = UIColor.white.cgColor
             star.shadowColor = UIColor.white.cgColor
@@ -417,30 +539,44 @@ final class TouchCanvas: UIView {
         let p = normalized(touch)
         start = p
         previous = p
+        erasingStroke = false
         if !tool.isPaintTool { engine?.beginStroke() }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, let start, let previous, !tool.isPaintTool else { return }
+        guard let touch = touches.first, let start, let previous, tool != .fill else { return }
+        if tool == .eraser && !erasingStroke {
+            engine?.beginStroke()
+            erasingStroke = true
+        }
         for sample in event?.coalescedTouches(for: touch) ?? [touch] {
             let p = normalized(sample)
-            engine?.draw(from: tool == .pencil ? self.previous ?? previous : start,
-                         to: p, tool: tool, width: lineWidth)
+            engine?.draw(from: tool == .pencil || tool == .brush || tool == .eraser ? self.previous ?? previous : start,
+                         to: p, tool: tool, width: lineWidth, color: color, glitterStyle: glitterStyle,
+                         options: paintOptions, render: false)
             self.previous = p
         }
+        engine?.renderStroke()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let start else { return }
         let p = normalized(touch)
-        if tool.isPaintTool {
+        if tool == .eraser {
+            if erasingStroke {
+                engine?.draw(from: previous ?? start, to: p, tool: .eraser, width: lineWidth, render: false)
+                engine?.endStroke()
+            } else {
+                engine?.erase(at: p, width: lineWidth)
+            }
+        } else if tool == .fill {
             if hypot(p.x - start.x, p.y - start.y) < 0.04 {
-                engine?.fill(at: p, color: tool == .eraser ? PaintColor.palette[19] : color,
-                             glitter: tool == .eraser ? false : glitter)
+                engine?.fill(at: p, color: color, glitterStyle: glitterStyle, options: paintOptions)
             }
         } else {
-            engine?.draw(from: tool == .pencil ? previous ?? start : start,
-                         to: p, tool: tool, width: lineWidth)
+            engine?.draw(from: tool == .pencil || tool == .brush ? previous ?? start : start,
+                         to: p, tool: tool, width: lineWidth, color: color, glitterStyle: glitterStyle,
+                         options: paintOptions, render: false)
             engine?.endStroke()
         }
         self.start = nil
