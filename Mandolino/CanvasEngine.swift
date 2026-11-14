@@ -414,6 +414,7 @@ final class CanvasEngine: ObservableObject {
         var visited = [Bool](repeating: false, count: size * size)
         for seed in seeds where !visited[seed] {
             var count = 0
+            var edge: [Int32] = []
             var minX = seed % size, maxX = minX, minY = seed / size, maxY = minY
             // Connectivity comes from outlines, not paint: colored and glitter regions remain recolorable.
             lines.withUnsafeBufferPointer { lineBuffer in
@@ -421,26 +422,40 @@ final class CanvasEngine: ObservableObject {
                     queue.withUnsafeMutableBufferPointer { q in
                         q[0] = Int32(seed); seen[seed] = true; count = 1
                         var cursor = 0
+                        func visit(_ next: Int) {
+                            guard !seen[next] else { return }
+                            seen[next] = true
+                            if lineBuffer[next] >= 200 {
+                                q[count] = Int32(next); count += 1
+                            } else {
+                                edge.append(Int32(next))
+                            }
+                        }
                         while cursor < count {
                             let index = Int(q[cursor]); cursor += 1
                             let px = index % size, py = index / size
                             if px < minX { minX = px } else if px > maxX { maxX = px }
                             if py < minY { minY = py } else if py > maxY { maxY = py }
-                            var next = index - 1
-                            if px > 0, !seen[next], lineBuffer[next] >= 200 {
-                                seen[next] = true; q[count] = Int32(next); count += 1
-                            }
-                            next = index + 1
-                            if px + 1 < size, !seen[next], lineBuffer[next] >= 200 {
-                                seen[next] = true; q[count] = Int32(next); count += 1
-                            }
-                            next = index - size
-                            if py > 0, !seen[next], lineBuffer[next] >= 200 {
-                                seen[next] = true; q[count] = Int32(next); count += 1
-                            }
-                            next = index + size
-                            if py + 1 < size, !seen[next], lineBuffer[next] >= 200 {
-                                seen[next] = true; q[count] = Int32(next); count += 1
+                            if px > 0 { visit(index - 1) }
+                            if px + 1 < size { visit(index + 1) }
+                            if py > 0 { visit(index - size) }
+                            if py + 1 < size { visit(index + size) }
+                        }
+                        // The outline's soft edge pixels are part of the line, so the fill stopped
+                        // before them and they stayed white: a thin light ring between the color and
+                        // the black line. Paint up to two pixels into the outline, but only through
+                        // soft pixels, so the color never crosses the line's dark core. The outline
+                        // is drawn on top, so this shows only at that soft edge.
+                        let firstRing = edge.count
+                        for i in 0..<firstRing {
+                            let index = Int(edge[i])
+                            guard lineBuffer[index] > 40 else { continue }
+                            let px = index % size, py = index / size
+                            for (valid, next) in [(px > 0, index - 1), (px + 1 < size, index + 1),
+                                                  (py > 0, index - size), (py + 1 < size, index + size)]
+                                where valid && !seen[next] && lineBuffer[next] < 200 {
+                                seen[next] = true
+                                edge.append(Int32(next))
                             }
                         }
                     }
@@ -450,8 +465,7 @@ final class CanvasEngine: ObservableObject {
             let style = glitterStyle.rawValue
             paint.withUnsafeMutableBufferPointer { paintBuffer in
                 glitterMask.withUnsafeMutableBufferPointer { mask in
-                    for i in 0..<count {
-                        let index = Int(queue[i])
+                    func paintPixel(_ index: Int) {
                         let px = index % size, py = index / size
                         let base = options.sample(color: color, x: px, y: py, size: size, bounds: bounds)
                         let rgb = Self.texture(base, style: glitterStyle, x: px, y: py)
@@ -460,6 +474,8 @@ final class CanvasEngine: ObservableObject {
                         paintBuffer[offset] = rgb.0; paintBuffer[offset + 1] = rgb.1
                         paintBuffer[offset + 2] = rgb.2; paintBuffer[offset + 3] = 255
                     }
+                    for i in 0..<count { paintPixel(Int(queue[i])) }
+                    for index in edge { paintPixel(Int(index)) }
                 }
             }
         }
