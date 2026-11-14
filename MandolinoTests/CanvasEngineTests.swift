@@ -270,6 +270,27 @@ final class CanvasEngineTests: XCTestCase {
         XCTAssertEqual(CanvasEngine(template: nil).paint, restored.paint)
     }
 
+    func testLegacyDrawingsAreConvertedWithThumbnails() throws {
+        let restore = try preserveSavedFiles(of: "free-draw")
+        defer { restore() }
+        let original = CanvasEngine(template: nil, restore: false)
+        box(original)
+        original.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitter: true)
+        let legacy = CanvasSnapshot(size: original.size, lines: Data(original.lines),
+                                    paint: Data(original.paint), glitter: Data(original.glitterMask))
+        try? FileManager.default.removeItem(at: savedFileURL("free-draw", "mandolino"))
+        try? FileManager.default.removeItem(at: savedFileURL("free-draw", "png"))
+        try JSONEncoder().encode(legacy).write(to: savedFileURL("free-draw", "json"))
+        CanvasEngine.convertLegacyDrawings()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try savedFileURL("free-draw", "json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try savedFileURL("free-draw", "png").path))
+        let converted = CanvasEngine(template: nil)
+        XCTAssertNil(converted.errorMessage)
+        XCTAssertEqual(converted.lines, original.lines)
+        XCTAssertEqual(converted.paint, original.paint)
+        XCTAssertEqual(converted.glitterMask, original.glitterMask)
+    }
+
     func testCatalogHasLargeDistinctCollectionsAndEnclosedColorableRegions() {
         XCTAssertGreaterThanOrEqual(MandalaTemplate.all.count, 96)
         XCTAssertEqual(Set(MandalaTemplate.all.map(\.id)).count, MandalaTemplate.all.count)

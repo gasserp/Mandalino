@@ -8,6 +8,7 @@ struct MandolinoApp: App {
         } else if ProcessInfo.processInfo.arguments.contains("-UITestGerman") {
             UserDefaults.standard.set("de", forKey: "appLanguage")
         }
+        Task.detached(priority: .utility) { CanvasEngine.convertLegacyDrawings() }
     }
 
     var body: some Scene {

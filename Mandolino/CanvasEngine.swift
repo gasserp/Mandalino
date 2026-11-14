@@ -220,7 +220,8 @@ final class CanvasEngine: ObservableObject {
     private var redoStack: [CanvasSnapshot] = []
     private var strokeBase: CanvasSnapshot?
     private var saveTask: Task<Void, Never>?
-    private let saveQueue = DispatchQueue(label: "Mandolino.drawing-save", qos: .utility)
+    // Shared by all pages so the old-format conversion and a page's own saves never interleave.
+    private static let saveQueue = DispatchQueue(label: "Mandolino.drawing-save", qos: .utility)
     private var revision = 0
     private var dirty = false
 
@@ -584,7 +585,7 @@ final class CanvasEngine: ObservableObject {
     private func saveInBackground() {
         guard dirty else { return }
         let state = snapshot, image = image, documentID = documentID, savingRevision = revision
-        saveQueue.async { [weak self] in
+        Self.saveQueue.async { [weak self] in
             let result = Result { try Self.write(state, image: image, documentID: documentID) }
             Task { @MainActor [weak self] in
                 guard let self, self.revision == savingRevision, self.dirty else { return }
@@ -601,7 +602,7 @@ final class CanvasEngine: ObservableObject {
         guard dirty else { return }
         do {
             let state = snapshot, image = image
-            try saveQueue.sync { try Self.write(state, image: image, documentID: documentID) }
+            try Self.saveQueue.sync { try Self.write(state, image: image, documentID: documentID) }
             dirty = false
         } catch {
             errorMessage = "\(L.text("Your drawing could not be saved:")) \(error.localizedDescription)"
@@ -628,12 +629,36 @@ final class CanvasEngine: ObservableObject {
                                          from: (data as NSData).decompressed(using: .lzfse) as Data)
     }
 
-    private static func fileURL(_ documentID: String, _ pathExtension: String) throws -> URL {
+    /// Rewrites drawings saved by older versions (about 14 MB of JSON each) in the compact format with a
+    /// gallery thumbnail. Call it off the main thread. Each page is loaded and rewritten in one save-queue
+    /// block, so a page being colored at the same time is never overwritten with an older version.
+    static func convertLegacyDrawings() {
+        guard let folder = try? drawingsFolder(),
+              let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        else { return }
+        for file in files where file.pathExtension == "json" {
+            let id = file.deletingPathExtension().lastPathComponent
+            let template = MandalaTemplate.all.first { $0.id == id }
+            guard template != nil || id == "free-draw" else { continue }
+            saveQueue.sync {
+                let engine = CanvasEngine(template: template)
+                // An unreadable drawing stays as it is, so opening the page still reports the problem.
+                guard engine.errorMessage == nil else { return }
+                try? write(engine.snapshot, image: engine.image, documentID: id)
+            }
+        }
+    }
+
+    private static func drawingsFolder() throws -> URL {
         let folder = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask,
                                                 appropriateFor: nil, create: true)
             .appendingPathComponent("Drawings", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder.appendingPathComponent(documentID).appendingPathExtension(pathExtension)
+        return folder
+    }
+
+    private static func fileURL(_ documentID: String, _ pathExtension: String) throws -> URL {
+        try drawingsFolder().appendingPathComponent(documentID).appendingPathExtension(pathExtension)
     }
 
     static func thumbnailURL(for documentID: String) throws -> URL {
