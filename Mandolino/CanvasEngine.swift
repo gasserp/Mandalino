@@ -168,9 +168,14 @@ struct PaintOptions {
 }
 
 enum DrawingTool: String, CaseIterable, Identifiable {
-    case fill, brush, pencil, circle, square, triangle, eraser
+    case fill, brush, pencil, ruler, circle, square, triangle, star, lineStar, eraser
     var id: String { rawValue }
-    var title: String { L.text(rawValue.capitalized) }
+    var title: String {
+        switch self {
+        case .lineStar: return L.text("Line star")
+        default: return L.text(rawValue.capitalized)
+        }
+    }
     var isPaintTool: Bool { self == .fill || self == .eraser }
     var symbol: String {
         switch self {
@@ -180,6 +185,9 @@ enum DrawingTool: String, CaseIterable, Identifiable {
         case .circle: return "circle"
         case .square: return "square"
         case .triangle: return "triangle"
+        case .ruler: return "ruler"
+        case .star: return "star"
+        case .lineStar: return ToolIcon.pentagram
         case .eraser: return "eraser.fill"
         }
     }
@@ -553,6 +561,16 @@ final class CanvasEngine: ObservableObject {
         return (UInt8(r), UInt8(g), UInt8(b))
     }
 
+    /// The five tips of a star filling `rect` (point up) and the five corners between them.
+    static func starPoints(in rect: CGRect) -> (outer: [CGPoint], inner: [CGPoint]) {
+        func point(_ i: Int, _ scale: CGFloat) -> CGPoint {
+            let angle = -CGFloat.pi / 2 + CGFloat(i) * .pi / 5
+            return CGPoint(x: rect.midX + cos(angle) * rect.width / 2 * scale,
+                           y: rect.midY + sin(angle) * rect.height / 2 * scale)
+        }
+        return ((0..<5).map { point($0 * 2, 1) }, (0..<5).map { point($0 * 2 + 1, 0.4) })
+    }
+
     func beginStroke() {
         strokeBase = snapshot
     }
@@ -596,10 +614,29 @@ final class CanvasEngine: ObservableObject {
                     context.strokeEllipse(in: rect)
                 case .square:
                     context.stroke(rect)
+                case .ruler:
+                    context.move(to: a)
+                    context.addLine(to: b)
+                    context.strokePath()
                 case .triangle:
                     context.move(to: CGPoint(x: rect.midX, y: rect.minY))
                     context.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
                     context.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+                    context.closePath()
+                    context.strokePath()
+                case .star:
+                    // A five-point star outline: one closed shape to color.
+                    let points = Self.starPoints(in: rect)
+                    context.addLines(between: (0..<10).map { i in
+                        i.isMultiple(of: 2) ? points.outer[i / 2] : points.inner[i / 2]
+                    })
+                    context.closePath()
+                    context.strokePath()
+                case .lineStar:
+                    // A star drawn only with five straight lines; where they cross, a pentagon and
+                    // five points become six spaces to color.
+                    let outer = Self.starPoints(in: rect).outer
+                    context.addLines(between: [0, 2, 4, 1, 3].map { outer[$0] })
                     context.closePath()
                     context.strokePath()
                 case .fill, .eraser, .brush: break

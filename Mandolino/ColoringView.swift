@@ -63,7 +63,8 @@ struct ColoringView: View {
     // Everyday colors that stay in the tray; all forty are one tap away under "All colors".
     private static let trayColorIDs = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 16, 20, 19]
     private static let myColorSlots = 6
-    private static let lineTools: [DrawingTool] = [.pencil, .circle, .square, .triangle]
+    private static let lineTools: [DrawingTool] = [.pencil, .ruler, .circle, .square,
+                                                   .triangle, .star, .lineStar]
 
     init(template: MandalaTemplate?, documentID: String? = nil) {
         self.template = template
@@ -323,7 +324,8 @@ struct ColoringView: View {
         case .fill: return "Tap a closed space to fill it."
         case .brush: return "Draw freely with your selected color and glitter."
         case .pencil: return "Drag on the paper to draw a line."
-        case .circle, .square, .triangle: return "Drag on the paper to draw a shape."
+        case .ruler: return "Drag from one point to another for a straight line."
+        case .circle, .square, .triangle, .star, .lineStar: return "Drag on the paper to draw a shape."
         case .eraser: return "Tap to erase a space. Drag to rub out drawn lines and paint."
         }
     }
@@ -400,7 +402,7 @@ struct ColoringView: View {
         tile(title: L.text("Lines"), symbol: lineTool.symbol, selected: Self.lineTools.contains(tool),
              id: "tool-lines") { choosingLines = true }
             .popover(isPresented: $choosingLines) {
-                HStack(spacing: 12) {
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(96), spacing: 12), count: 4), spacing: 12) {
                     ForEach(Self.lineTools) { item in
                         Button {
                             lineTool = item
@@ -408,8 +410,11 @@ struct ColoringView: View {
                             choosingLines = false
                         } label: {
                             VStack(spacing: 6) {
-                                Image(systemName: item.symbol).font(.system(size: 30, weight: .medium))
-                                Text(item.title).font(.system(size: 14, weight: .semibold, design: .rounded))
+                                ToolIcon(symbol: item.symbol, size: 30)
+                                Text(item.title)
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
                             }
                             .frame(width: 96, height: 96)
                             .foregroundStyle(tool == item ? .white : Theme.teal)
@@ -428,7 +433,7 @@ struct ColoringView: View {
                       id: String, perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
             VStack(spacing: 4) {
-                Image(systemName: symbol).font(.system(size: 24, weight: .semibold))
+                ToolIcon(symbol: symbol, size: 24)
                 Text(title)
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .lineLimit(1)
@@ -827,6 +832,27 @@ extension View {
     /// Opacity alone left hidden buttons findable, so taps meant for them landed on the view underneath.
     @ViewBuilder func shown(_ visible: Bool) -> some View {
         if visible { self } else { hidden() }
+    }
+}
+
+/// A tool's icon: an SF Symbol, or the line star, which has no symbol and is drawn here.
+struct ToolIcon: View {
+    static let pentagram = "mandolino.pentagram"
+    let symbol: String
+    let size: CGFloat
+
+    var body: some View {
+        if symbol == Self.pentagram {
+            Path { path in
+                let outer = CanvasEngine.starPoints(in: CGRect(x: 0, y: 0, width: size, height: size)).outer
+                path.addLines([0, 2, 4, 1, 3].map { outer[$0] })
+                path.closeSubpath()
+            }
+            .stroke(style: StrokeStyle(lineWidth: max(2, size / 12), lineJoin: .round))
+            .frame(width: size, height: size)
+        } else {
+            Image(systemName: symbol).font(.system(size: size, weight: .semibold))
+        }
     }
 }
 

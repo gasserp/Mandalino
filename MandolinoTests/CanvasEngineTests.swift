@@ -349,6 +349,55 @@ final class CanvasEngineTests: XCTestCase {
         XCTAssertTrue(map.progress(paint: engine.paint).finished, "Dots on white still count as colored")
     }
 
+    func testRulerStarAndLineStarDrawFillableOutlines() {
+        let engine = CanvasEngine(template: nil, size: 300, restore: false)
+        // The ruler previews while dragging and keeps only the final straight line.
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.1, y: 0.1), to: CGPoint(x: 0.9, y: 0.5), tool: .ruler, width: 6)
+        engine.draw(from: CGPoint(x: 0.1, y: 0.1), to: CGPoint(x: 0.9, y: 0.1), tool: .ruler, width: 6)
+        engine.endStroke()
+        XCTAssertLessThan(engine.lines[30 * 300 + 150], 200, "The straight line runs along y = 0.1")
+        XCTAssertEqual(engine.lines[90 * 300 + 150], 255, "The earlier preview leaves no line behind")
+
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.1, y: 0.2), to: CGPoint(x: 0.45, y: 0.55), tool: .star, width: 6)
+        engine.endStroke()
+        XCTAssertTrue(engine.fill(at: CGPoint(x: 0.275, y: 0.39), color: red, glitterStyle: .none))
+        XCTAssertEqual(pixel(engine, 0.275, 0.39), [red.red, red.green, red.blue])
+        XCTAssertEqual(pixel(engine, 0.12, 0.53), [255, 255, 255], "The star is closed")
+
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.55, y: 0.45), to: CGPoint(x: 0.95, y: 0.85), tool: .lineStar, width: 6)
+        engine.endStroke()
+        let map = SpaceMap(lines: engine.lines, size: 300)
+        let center = Int(0.66 * 300) * 300 + Int(0.75 * 300)
+        let tip = Int(0.52 * 300) * 300 + Int(0.75 * 300)
+        XCTAssertGreaterThanOrEqual(map.labels[center], 0, "The middle pentagon is its own space")
+        XCTAssertGreaterThanOrEqual(map.labels[tip], 0, "Each tip is its own space")
+        XCTAssertNotEqual(map.labels[center], map.labels[tip])
+    }
+
+    func testFillsReachTheSoftEdgeOfOutlines() {
+        // A circle, because straight lines along the pixel grid have no soft edge pixels.
+        let engine = CanvasEngine(template: nil, size: 200, restore: false)
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.2, y: 0.2), to: CGPoint(x: 0.8, y: 0.8), tool: .circle, width: 12)
+        engine.endStroke()
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none)
+        let soft = (0..<engine.lines.count).filter { engine.lines[$0] < 200 && engine.lines[$0] > 40 }
+        XCTAssertFalse(soft.isEmpty)
+        // Soft pixels on the inner side of the ring (radius 60 px at this size, line 2.4 px wide).
+        let insideEdge = soft.filter { index in
+            hypot(CGFloat(index % 200) + 0.5 - 100, CGFloat(index / 200) + 0.5 - 100) < 60
+        }
+        XCTAssertFalse(insideEdge.isEmpty)
+        for index in insideEdge {
+            XCTAssertEqual(Array(engine.paint[index * 4..<index * 4 + 3]), [red.red, red.green, red.blue],
+                           "No white ring between the color and the line")
+        }
+        XCTAssertEqual(pixel(engine, 0.1, 0.1), [255, 255, 255], "The color does not cross the line")
+    }
+
     func testCatalogHasLargeDistinctCollectionsAndEnclosedColorableRegions() {
         XCTAssertGreaterThanOrEqual(MandalaTemplate.all.count, 96)
         XCTAssertEqual(Set(MandalaTemplate.all.map(\.id)).count, MandalaTemplate.all.count)
