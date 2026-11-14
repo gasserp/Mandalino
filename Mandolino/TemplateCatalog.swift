@@ -33,18 +33,26 @@ struct MandalaTemplate: Identifiable {
         .init(id: "butterfly", title: "Butterfly", symbol: "butterfly", difficulty: .easy),
         .init(id: "fish", title: "Fish", symbol: "fish", difficulty: .easy),
         .init(id: "turtle", title: "Turtle", symbol: "tortoise", difficulty: .easy),
+        .init(id: "rabbit", title: "Rabbit", symbol: "hare", difficulty: .easy),
+        .init(id: "ladybug", title: "Ladybug", symbol: "ladybug", difficulty: .easy),
         .init(id: "sunflower", title: "Sunflower", symbol: "sun.max", difficulty: .medium),
         .init(id: "owl", title: "Owl", symbol: "bird", difficulty: .medium),
         .init(id: "cat", title: "Cat", symbol: "cat", difficulty: .medium),
         .init(id: "lotus", title: "Lotus", symbol: "camera.macro", difficulty: .medium),
+        .init(id: "hedgehog", title: "Hedgehog", symbol: "pawprint", difficulty: .medium),
+        .init(id: "snail", title: "Snail", symbol: "leaf", difficulty: .medium),
         .init(id: "rosette", title: "Rosette", symbol: "seal", difficulty: .hard),
         .init(id: "lion", title: "Lion", symbol: "pawprint", difficulty: .hard),
         .init(id: "fox", title: "Fox", symbol: "pawprint", difficulty: .hard),
         .init(id: "peacock", title: "Peacock", symbol: "bird", difficulty: .hard),
+        .init(id: "elephant", title: "Elephant", symbol: "pawprint", difficulty: .hard),
+        .init(id: "bear", title: "Bear", symbol: "teddybear", difficulty: .hard),
         .init(id: "kaleidoscope", title: "Kaleidoscope", symbol: "sparkles", difficulty: .expert),
         .init(id: "star-garden", title: "Star garden", symbol: "star", difficulty: .expert),
         .init(id: "lace-flower", title: "Lace flower", symbol: "camera.macro", difficulty: .expert),
-        .init(id: "owl-mosaic", title: "Owl mosaic", symbol: "bird", difficulty: .expert)
+        .init(id: "owl-mosaic", title: "Owl mosaic", symbol: "bird", difficulty: .expert),
+        .init(id: "penguin-mosaic", title: "Penguin mosaic", symbol: "bird", difficulty: .expert),
+        .init(id: "bee-mosaic", title: "Bee mosaic", symbol: "ladybug", difficulty: .expert)
     ]
 
     static let all: [MandalaTemplate] = originals + originals.flatMap { base in
@@ -70,12 +78,9 @@ struct MandalaTemplate: Identifiable {
             case .hard: count = 20 + variation * 4
             case .expert: count = 40 + variation * 8
             }
-            jeweledRing(context, inner: 365, outer: 440, count: count,
-                        jewel: difficulty == .easy ? 17 : 10)
-            if variation.isMultiple(of: 2) {
-                ring(context, inner: 330, outer: 360, count: count)
-            }
-            let scale = 0.66 + CGFloat(variation) * 0.025
+            let inner = versionFrame(context, variation: variation, count: count,
+                                     jewel: difficulty == .easy ? 17 : 10)
+            let scale = (inner - 10) / 440
             context.translateBy(x: 500 * (1 - scale), y: 500 * (1 - scale))
             context.scaleBy(x: scale, y: scale)
         }
@@ -142,6 +147,26 @@ struct MandalaTemplate: Identifiable {
             petals(context, count: 12, radius: 150, length: 80, width: 75, pointed: true)
             ring(context, inner: 20, outer: 70, count: 12)
             circle(context, 500, 500, 20)
+        case "rabbit": rabbit(context)
+        case "ladybug": ladybug(context)
+        case "hedgehog":
+            ring(context, inner: 405, outer: 440, count: 12)
+            hedgehog(context)
+        case "snail":
+            ring(context, inner: 405, outer: 440, count: 12)
+            snail(context)
+        case "elephant":
+            ornateBorder(context)
+            elephant(context)
+        case "bear":
+            ornateBorder(context)
+            bear(context)
+        case "penguin-mosaic":
+            mosaicRings(context)
+            penguin(context)
+        case "bee-mosaic":
+            mosaicRings(context)
+            bee(context)
         case "owl-mosaic":
             ring(context, inner: 335, outer: 365, count: 48)
             jeweledRing(context, inner: 375, outer: 400, count: 48, jewel: 6)
@@ -384,4 +409,198 @@ private func peacock(_ context: CGContext) {
         ellipse(context, CGRect(x: x, y: 590, width: 52, height: 115))
     }
     for x: CGFloat in [475, 500, 525] { circle(context, x, 310, 14) }
+}
+
+/// Draws the frame of a page version and returns the radius left free inside it for the design.
+/// Each version has its own style, so the six pages of a design no longer look almost the same.
+private func versionFrame(_ context: CGContext, variation: Int, count: Int, jewel: CGFloat) -> CGFloat {
+    let petalWidth = min(2 * .pi * 395 / CGFloat(count) * 0.75, 110)
+    switch variation {
+    case 1:
+        jeweledRing(context, inner: 365, outer: 440, count: count, jewel: jewel)
+        return 365
+    case 2:
+        circle(context, 500, 500, 350)
+        petals(context, count: count, radius: 440, length: 95, width: petalWidth)
+        return 350
+    case 3:
+        circle(context, 500, 500, 345)
+        petals(context, count: count, radius: 440, length: 100, width: petalWidth * 0.6, pointed: true)
+        return 345
+    case 4:
+        jeweledRing(context, inner: 365, outer: 440, count: count, jewel: jewel)
+        ring(context, inner: 330, outer: 360, count: count)
+        return 330
+    default:
+        circle(context, 500, 500, 440)
+        circle(context, 500, 500, 350)
+        let stars = max(6, count / 2)
+        for i in 0..<stars {
+            let angle = CGFloat(i) * .pi * 2 / CGFloat(stars)
+            star(context, center: CGPoint(x: 500 + 395 * cos(angle), y: 500 + 395 * sin(angle)),
+                 radius: min(34, 2 * .pi * 395 / CGFloat(stars) * 0.35))
+        }
+        return 350
+    }
+}
+
+private func star(_ context: CGContext, center: CGPoint, radius: CGFloat) {
+    polygon(context, (0..<10).map { i in
+        let r = i.isMultiple(of: 2) ? radius : radius * 0.45
+        let angle = CGFloat(i) * .pi / 5 - .pi / 2
+        return CGPoint(x: center.x + r * cos(angle), y: center.y + r * sin(angle))
+    })
+}
+
+private func mosaicRings(_ context: CGContext) {
+    ring(context, inner: 335, outer: 365, count: 48)
+    jeweledRing(context, inner: 375, outer: 400, count: 48, jewel: 6)
+    jeweledRing(context, inner: 410, outer: 440, count: 48, jewel: 8)
+    ring(context, inner: 285, outer: 330, count: 24)
+}
+
+private func line(_ context: CGContext, _ a: CGPoint, _ b: CGPoint) {
+    context.move(to: a)
+    context.addLine(to: b)
+    context.strokePath()
+}
+
+private func rabbit(_ context: CGContext) {
+    for x: CGFloat in [360, 530] {
+        ellipse(context, CGRect(x: x, y: 110, width: 110, height: 300))
+        ellipse(context, CGRect(x: x + 25, y: 150, width: 60, height: 220))
+    }
+    circle(context, 690, 770, 50)
+    ellipse(context, CGRect(x: 320, y: 540, width: 360, height: 330))
+    ellipse(context, CGRect(x: 410, y: 640, width: 180, height: 190))
+    for x: CGFloat in [330, 540] {
+        ellipse(context, CGRect(x: x, y: 820, width: 130, height: 70))
+    }
+    circle(context, 500, 430, 140)
+    eyes(context, left: 450, right: 550, y: 410, radius: 22)
+    polygon(context, [CGPoint(x: 485, y: 465), CGPoint(x: 515, y: 465), CGPoint(x: 500, y: 485)])
+    for x: CGFloat in [420, 580] { circle(context, x, 470, 18) }
+}
+
+private func ladybug(_ context: CGContext) {
+    for y: CGFloat in [420, 560, 700] {
+        ellipse(context, CGRect(x: 190, y: y - 20, width: 130, height: 40))
+        ellipse(context, CGRect(x: 680, y: y - 20, width: 130, height: 40))
+    }
+    line(context, CGPoint(x: 460, y: 220), CGPoint(x: 400, y: 150))
+    line(context, CGPoint(x: 540, y: 220), CGPoint(x: 600, y: 150))
+    circle(context, 400, 150, 22)
+    circle(context, 600, 150, 22)
+    circle(context, 500, 560, 250)
+    ellipse(context, CGRect(x: 390, y: 190, width: 220, height: 170))
+    line(context, CGPoint(x: 500, y: 355), CGPoint(x: 500, y: 810))
+    for spot in [(400, 470, 40), (600, 470, 40), (380, 620, 45), (620, 620, 45), (440, 740, 32), (560, 740, 32)] {
+        circle(context, CGFloat(spot.0), CGFloat(spot.1), CGFloat(spot.2))
+    }
+    for x: CGFloat in [455, 545] { circle(context, x, 260, 18) }
+}
+
+private func hedgehog(_ context: CGContext) {
+    let center = CGPoint(x: 470, y: 580)
+    for i in 0..<13 {
+        let angle = (-172 + CGFloat(i) * 13.5) * .pi / 180
+        let half: CGFloat = 6.75 * .pi / 180
+        polygon(context, [
+            CGPoint(x: center.x + 230 * cos(angle - half), y: center.y + 230 * sin(angle - half)),
+            CGPoint(x: center.x + 370 * cos(angle), y: center.y + 370 * sin(angle)),
+            CGPoint(x: center.x + 230 * cos(angle + half), y: center.y + 230 * sin(angle + half)),
+        ])
+    }
+    for x: CGFloat in [330, 520] {
+        ellipse(context, CGRect(x: x, y: 740, width: 100, height: 70))
+    }
+    ellipse(context, CGRect(x: 250, y: 380, width: 440, height: 400))
+    ellipse(context, CGRect(x: 580, y: 520, width: 230, height: 170))
+    circle(context, 805, 600, 30)
+    circle(context, 670, 560, 24)
+    circle(context, 670, 560, 10)
+    circle(context, 600, 470, 40)
+    for spot in [(380, 560), (450, 640), (360, 680), (480, 520)] {
+        circle(context, CGFloat(spot.0), CGFloat(spot.1), 22)
+    }
+}
+
+private func snail(_ context: CGContext) {
+    ellipse(context, CGRect(x: 190, y: 640, width: 620, height: 150))
+    ellipse(context, CGRect(x: 670, y: 450, width: 140, height: 260))
+    line(context, CGPoint(x: 710, y: 470), CGPoint(x: 680, y: 330))
+    line(context, CGPoint(x: 770, y: 470), CGPoint(x: 810, y: 340))
+    circle(context, 680, 330, 24)
+    circle(context, 810, 340, 24)
+    let shell = CGPoint(x: 430, y: 520)
+    circle(context, shell.x, shell.y, 220)
+    ring(context, inner: 160, outer: 220, count: 10, center: shell)
+    ring(context, inner: 105, outer: 160, count: 8, center: shell)
+    ring(context, inner: 55, outer: 105, count: 6, center: shell)
+    circle(context, shell.x, shell.y, 55)
+    circle(context, 740, 540, 14)
+}
+
+private func elephant(_ context: CGContext) {
+    for left in [true, false] {
+        ellipse(context, CGRect(x: left ? 170 : 570, y: 300, width: 260, height: 330))
+        ellipse(context, CGRect(x: left ? 205 : 625, y: 345, width: 170, height: 240))
+    }
+    ellipse(context, CGRect(x: 330, y: 260, width: 340, height: 340))
+    polygon(context, [CGPoint(x: 440, y: 600), CGPoint(x: 470, y: 610), CGPoint(x: 400, y: 690)])
+    polygon(context, [CGPoint(x: 530, y: 610), CGPoint(x: 560, y: 600), CGPoint(x: 600, y: 690)])
+    polygon(context, [CGPoint(x: 455, y: 540), CGPoint(x: 545, y: 540), CGPoint(x: 540, y: 700),
+                      CGPoint(x: 575, y: 760), CGPoint(x: 560, y: 800), CGPoint(x: 505, y: 790),
+                      CGPoint(x: 480, y: 720), CGPoint(x: 460, y: 640)])
+    eyes(context, left: 430, right: 570, y: 420, radius: 30)
+    let mark = CGPoint(x: 500, y: 320)
+    ring(context, inner: 22, outer: 50, count: 8, center: mark)
+    circle(context, mark.x, mark.y, 22)
+}
+
+private func bear(_ context: CGContext) {
+    for x: CGFloat in [330, 670] {
+        circle(context, x, 260, 75)
+        circle(context, x, 260, 40)
+    }
+    polygon(context, [CGPoint(x: 500, y: 700), CGPoint(x: 395, y: 645), CGPoint(x: 395, y: 755)])
+    polygon(context, [CGPoint(x: 500, y: 700), CGPoint(x: 605, y: 645), CGPoint(x: 605, y: 755)])
+    circle(context, 500, 700, 28)
+    circle(context, 500, 440, 220)
+    ellipse(context, CGRect(x: 400, y: 470, width: 200, height: 150))
+    ellipse(context, CGRect(x: 460, y: 485, width: 80, height: 55))
+    eyes(context, left: 415, right: 585, y: 390, radius: 30)
+    for x: CGFloat in [365, 635] { circle(context, x, 520, 25) }
+    for x: CGFloat in [450, 500, 550] { circle(context, x, 290, 16) }
+}
+
+private func penguin(_ context: CGContext) {
+    ellipse(context, CGRect(x: 320, y: 420, width: 80, height: 220))
+    ellipse(context, CGRect(x: 600, y: 420, width: 80, height: 220))
+    ellipse(context, CGRect(x: 360, y: 250, width: 280, height: 480))
+    ellipse(context, CGRect(x: 400, y: 380, width: 200, height: 330))
+    for x: CGFloat in [410, 510] {
+        ellipse(context, CGRect(x: x, y: 715, width: 80, height: 40))
+    }
+    eyes(context, left: 455, right: 545, y: 330, radius: 22)
+    polygon(context, [CGPoint(x: 480, y: 365), CGPoint(x: 520, y: 365), CGPoint(x: 500, y: 400)])
+    for y: CGFloat in [490, 560, 630] { circle(context, 500, y, 20) }
+}
+
+private func bee(_ context: CGContext) {
+    ellipse(context, CGRect(x: 380, y: 270, width: 170, height: 210))
+    ellipse(context, CGRect(x: 520, y: 270, width: 170, height: 210))
+    polygon(context, [CGPoint(x: 690, y: 505), CGPoint(x: 760, y: 520), CGPoint(x: 690, y: 535)])
+    ellipse(context, CGRect(x: 330, y: 410, width: 360, height: 220))
+    // Stripes run exactly from edge to edge of the body, so each one splits it into closed spaces.
+    for x: CGFloat in [430, 510, 590] {
+        let half = 110 * sqrt(1 - pow((x - 510) / 180, 2)) + 2
+        line(context, CGPoint(x: x, y: 520 - half), CGPoint(x: x, y: 520 + half))
+    }
+    line(context, CGPoint(x: 285, y: 460), CGPoint(x: 270, y: 395))
+    line(context, CGPoint(x: 315, y: 455), CGPoint(x: 330, y: 385))
+    circle(context, 270, 395, 18)
+    circle(context, 330, 385, 18)
+    circle(context, 300, 520, 80)
+    eyes(context, left: 275, right: 330, y: 505, radius: 16)
 }
