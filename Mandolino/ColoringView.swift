@@ -46,6 +46,8 @@ struct ColoringView: View {
     @State private var brushSize: BrushSize = .medium
     @State private var showingMagic = false
     @State private var choosingLines = false
+    @State private var symmetry = 0
+    @State private var choosingMirror = false
     @State private var choosingAllColors = false
     @State private var choosingStartColor = false
     @State private var choosingEndColor = false
@@ -108,7 +110,7 @@ struct ColoringView: View {
                     canvas.frame(maxWidth: .infinity, maxHeight: .infinity)
                     VStack(spacing: 12) {
                         HStack(spacing: 12) {
-                            toolGrid(columns: 4, tileWidth: 76)
+                            toolGrid(columns: 5, tileWidth: 72)
                             sizePicker
                             Spacer(minLength: 0)
                             modeTile(width: 76)
@@ -126,6 +128,9 @@ struct ColoringView: View {
         .onAppear { flash([engine.hint, "Pinch to zoom. Move around with two fingers."]) }
         .onChange(of: engine.hint) { _, hint in flash([hint]) }
         .onChange(of: tool) { _, tool in flash([help(for: tool)]) }
+        .onChange(of: symmetry) { _, symmetry in
+            if symmetry > 1 { flash(["Everything you draw and fill now repeats around the middle."]) }
+        }
         .task(id: bubbleRevision) {
             guard bubbleRevision > 0 else { return }
             try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -247,7 +252,7 @@ struct ColoringView: View {
             let side = min(geometry.size.width, geometry.size.height)
             DrawingSurface(engine: engine, tool: tool, color: selectedColor,
                            glitterStyle: glitterStyle, paintOptions: paintOptions,
-                           lineWidth: brushSize.width(for: tool))
+                           lineWidth: brushSize.width(for: tool), symmetry: symmetry)
                 .accessibilityIdentifier("drawing-canvas")
                 .frame(width: side, height: side)
                 .background(.white)
@@ -305,6 +310,56 @@ struct ColoringView: View {
             toolTile(.brush)
             linesTile
             toolTile(.eraser)
+            mirrorTile
+        }
+    }
+
+    // Mirror drawing is a mode, not a tool: it repeats whatever the current tool does around the center.
+    private var mirrorTile: some View {
+        tile(title: symmetry > 1 ? "\(L.text("Mirror")) \(symmetry)" : L.text("Mirror"), symbol: "snowflake",
+             selected: symmetry > 1, id: "tool-mirror") { choosingMirror = true }
+            .popover(isPresented: $choosingMirror) {
+                HStack(spacing: 12) {
+                    ForEach([0, 6, 8, 12], id: \.self) { count in
+                        Button {
+                            symmetry = count
+                            choosingMirror = false
+                        } label: {
+                            VStack(spacing: 6) {
+                                if count == 0 {
+                                    Image(systemName: "nosign").font(.system(size: 30, weight: .medium))
+                                } else {
+                                    mirrorPreview(count).frame(width: 36, height: 36)
+                                }
+                                Text(count == 0 ? L.text("Off") : "\(count)")
+                                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            }
+                            .frame(width: 96, height: 96)
+                            .foregroundStyle(symmetry == count ? .white : Theme.teal)
+                            .background(symmetry == count ? Theme.teal : Theme.cream,
+                                        in: RoundedRectangle(cornerRadius: 18))
+                        }
+                        .accessibilityLabel(count == 0 ? L.text("Off") : "\(L.text("Mirror")) \(count)")
+                        .accessibilityAddTraits(symmetry == count ? .isSelected : [])
+                        .accessibilityIdentifier("mirror-\(count)")
+                    }
+                }
+                .padding(16)
+            }
+    }
+
+    // The mirror lines for a count, as they appear on the paper.
+    private func mirrorPreview(_ count: Int) -> some View {
+        GeometryReader { geometry in
+            Path { path in
+                let radius = geometry.size.width / 2
+                for line in 0..<count {
+                    let angle = CGFloat(line) * .pi / CGFloat(count)
+                    path.move(to: CGPoint(x: radius - cos(angle) * radius, y: radius - sin(angle) * radius))
+                    path.addLine(to: CGPoint(x: radius + cos(angle) * radius, y: radius + sin(angle) * radius))
+                }
+            }
+            .stroke(style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
         }
     }
 
@@ -377,7 +432,7 @@ struct ColoringView: View {
                 Button { brushSize = size } label: {
                     Circle().fill(brushSize == size ? Theme.teal : Theme.ink.opacity(0.3))
                         .frame(width: size.dot, height: size.dot)
-                        .frame(width: 40, height: 56)
+                        .frame(width: 34, height: 56)
                 }
                 .accessibilityLabel("\(L.text("Size")): \(size.title)")
                 .accessibilityAddTraits(brushSize == size ? .isSelected : [])
@@ -442,11 +497,18 @@ struct ColoringView: View {
         .accessibilityIdentifier(showingMagic ? "show-colors" : "show-magic")
     }
 
-    @ViewBuilder private func drawer(columns: Int) -> some View {
-        if showingMagic {
-            magicPanel(sideBySide: columns > 3)
-        } else {
+    // Both drawers stay laid out, one hidden, so the tray keeps its height when switching. Otherwise the
+    // shorter Magic drawer let the tray drop and the Colors button was no longer under her finger.
+    private func drawer(columns: Int) -> some View {
+        ZStack(alignment: .top) {
             colorGrid(columns: columns)
+                .opacity(showingMagic ? 0 : 1)
+                .allowsHitTesting(!showingMagic)
+                .accessibilityHidden(showingMagic)
+            magicPanel(sideBySide: columns > 3)
+                .opacity(showingMagic ? 1 : 0)
+                .allowsHitTesting(showingMagic)
+                .accessibilityHidden(!showingMagic)
         }
     }
 
@@ -711,6 +773,7 @@ struct DrawingSurface: UIViewRepresentable {
     let glitterStyle: GlitterStyle
     let paintOptions: PaintOptions
     let lineWidth: CGFloat
+    let symmetry: Int
 
     func makeUIView(context: Context) -> ZoomCanvas {
         ZoomCanvas()
@@ -724,6 +787,7 @@ struct DrawingSurface: UIViewRepresentable {
         view.glitterStyle = glitterStyle
         view.paintOptions = paintOptions
         view.lineWidth = lineWidth
+        view.symmetry = symmetry
         view.accessibilityLabel = L.text("Drawing canvas")
         view.accessibilityHint = L.text("Pinch to zoom. Move around with two fingers.")
     }
@@ -801,6 +865,10 @@ final class TouchCanvas: UIView {
     var glitterStyle: GlitterStyle = .none
     var paintOptions = PaintOptions()
     var lineWidth: CGFloat = 6
+    var symmetry = 0 {
+        didSet { if symmetry != oldValue { updateGuides() } }
+    }
+    private let guideLayer = CAShapeLayer()
     private var start: CGPoint?
     private var previous: CGPoint?
     private var sparklePoints: [CGPoint] = []
@@ -810,6 +878,11 @@ final class TouchCanvas: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        guideLayer.fillColor = nil
+        guideLayer.strokeColor = UIColor(Theme.teal).withAlphaComponent(0.4).cgColor
+        guideLayer.lineWidth = 1.5
+        guideLayer.lineDashPattern = [6, 6]
+        layer.addSublayer(guideLayer)
         layer.addSublayer(sparkleLayer)
         sparkleLayer.masksToBounds = true
     }
@@ -827,7 +900,25 @@ final class TouchCanvas: UIView {
         guard sparkleSize != bounds.size else { return }
         sparkleSize = bounds.size
         sparkleLayer.frame = bounds
+        guideLayer.frame = bounds
         rebuildSparkles()
+        updateGuides()
+    }
+
+    // Faint mirror lines through the center while mirror drawing is on; they are not part of the picture.
+    private func updateGuides() {
+        guard symmetry > 1 else {
+            guideLayer.path = nil
+            return
+        }
+        let center = CGPoint(x: bounds.midX, y: bounds.midY), radius = bounds.width / 2
+        let path = UIBezierPath()
+        for line in 0..<symmetry {
+            let angle = CGFloat(line) * .pi / CGFloat(symmetry)
+            path.move(to: CGPoint(x: center.x - cos(angle) * radius, y: center.y - sin(angle) * radius))
+            path.addLine(to: CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius))
+        }
+        guideLayer.path = path.cgPath
     }
 
     private func rebuildSparkles() {
@@ -899,7 +990,7 @@ final class TouchCanvas: UIView {
             let p = normalized(sample)
             engine?.draw(from: tool == .pencil || tool == .brush || tool == .eraser ? self.previous ?? previous : start,
                          to: p, tool: tool, width: lineWidth, color: color, glitterStyle: glitterStyle,
-                         options: paintOptions, render: false)
+                         options: paintOptions, symmetry: symmetry, render: false)
             self.previous = p
         }
         engine?.renderStroke()
@@ -910,19 +1001,21 @@ final class TouchCanvas: UIView {
         let p = normalized(touch)
         if tool == .eraser {
             if erasingStroke {
-                engine?.draw(from: previous ?? start, to: p, tool: .eraser, width: lineWidth, render: false)
+                engine?.draw(from: previous ?? start, to: p, tool: .eraser, width: lineWidth,
+                             symmetry: symmetry, render: false)
                 engine?.endStroke()
             } else {
-                engine?.erase(at: p, width: lineWidth)
+                engine?.erase(at: p, width: lineWidth, symmetry: symmetry)
             }
         } else if tool == .fill {
             if hypot(p.x - start.x, p.y - start.y) < 0.04 {
-                engine?.fill(at: p, color: color, glitterStyle: glitterStyle, options: paintOptions)
+                engine?.fill(at: p, color: color, glitterStyle: glitterStyle, options: paintOptions,
+                             symmetry: symmetry)
             }
         } else {
             engine?.draw(from: tool == .pencil || tool == .brush ? previous ?? start : start,
                          to: p, tool: tool, width: lineWidth, color: color, glitterStyle: glitterStyle,
-                         options: paintOptions, render: false)
+                         options: paintOptions, symmetry: symmetry, render: false)
             engine?.endStroke()
         }
         self.start = nil

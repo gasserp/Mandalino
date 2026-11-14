@@ -307,66 +307,88 @@ final class CanvasEngine: ObservableObject {
         fill(at: point, color: color, glitterStyle: glitter ? .fine : .none)
     }
 
+    /// The kaleidoscope copies for mirror drawing: each of `symmetry` turns around the page's center,
+    /// plus its mirror image. Off (0 or 1) is just the identity. `side` is the page width in the
+    /// coordinates being transformed (1 for normalized points).
+    static func symmetryTransforms(_ symmetry: Int, side: CGFloat) -> [CGAffineTransform] {
+        guard symmetry > 1 else { return [.identity] }
+        let center = side / 2
+        return (0..<symmetry).flatMap { turn -> [CGAffineTransform] in
+            let rotated = CGAffineTransform(translationX: center, y: center)
+                .rotated(by: CGFloat(turn) * 2 * .pi / CGFloat(symmetry))
+            return [rotated.translatedBy(x: -center, y: -center),
+                    rotated.scaledBy(x: -1, y: 1).translatedBy(x: -center, y: -center)]
+        }
+    }
+
     @discardableResult
     func fill(at point: CGPoint, color: PaintColor, glitterStyle: GlitterStyle,
-              options: PaintOptions = PaintOptions()) -> Bool {
+              options: PaintOptions = PaintOptions(), symmetry: Int = 0) -> Bool {
         guard point.x >= 0, point.y >= 0, point.x < 1, point.y < 1 else { return false }
         let x = Int(point.x * CGFloat(size)), y = Int(point.y * CGFloat(size))
-        let seed = y * size + x
-        guard lines[seed] >= 200 else {
+        guard lines[y * size + x] >= 200 else {
             hint = "Tap inside a space, not on its black outline."
             return false
         }
         checkpoint()
         let size = self.size
+        // With mirror drawing, the matching spaces around the circle are filled too, in the same undo step.
+        let seeds = Self.symmetryTransforms(symmetry, side: 1).compactMap { transform -> Int? in
+            let p = point.applying(transform)
+            guard p.x >= 0, p.y >= 0, p.x < 1, p.y < 1 else { return nil }
+            let seed = Int(p.y * CGFloat(size)) * size + Int(p.x * CGFloat(size))
+            return lines[seed] >= 200 ? seed : nil
+        }
         var queue = [Int32](repeating: 0, count: size * size)
-        var count = 0
-        var minX = x, maxX = x, minY = y, maxY = y
-        // Connectivity comes from outlines, not paint: colored and glitter regions remain recolorable.
-        lines.withUnsafeBufferPointer { lineBuffer in
-            var visited = [Bool](repeating: false, count: size * size)
-            visited.withUnsafeMutableBufferPointer { seen in
-                queue.withUnsafeMutableBufferPointer { q in
-                    q[0] = Int32(seed); seen[seed] = true; count = 1
-                    var cursor = 0
-                    while cursor < count {
-                        let index = Int(q[cursor]); cursor += 1
-                        let px = index % size, py = index / size
-                        if px < minX { minX = px } else if px > maxX { maxX = px }
-                        if py < minY { minY = py } else if py > maxY { maxY = py }
-                        var next = index - 1
-                        if px > 0, !seen[next], lineBuffer[next] >= 200 {
-                            seen[next] = true; q[count] = Int32(next); count += 1
-                        }
-                        next = index + 1
-                        if px + 1 < size, !seen[next], lineBuffer[next] >= 200 {
-                            seen[next] = true; q[count] = Int32(next); count += 1
-                        }
-                        next = index - size
-                        if py > 0, !seen[next], lineBuffer[next] >= 200 {
-                            seen[next] = true; q[count] = Int32(next); count += 1
-                        }
-                        next = index + size
-                        if py + 1 < size, !seen[next], lineBuffer[next] >= 200 {
-                            seen[next] = true; q[count] = Int32(next); count += 1
+        var visited = [Bool](repeating: false, count: size * size)
+        for seed in seeds where !visited[seed] {
+            var count = 0
+            var minX = seed % size, maxX = minX, minY = seed / size, maxY = minY
+            // Connectivity comes from outlines, not paint: colored and glitter regions remain recolorable.
+            lines.withUnsafeBufferPointer { lineBuffer in
+                visited.withUnsafeMutableBufferPointer { seen in
+                    queue.withUnsafeMutableBufferPointer { q in
+                        q[0] = Int32(seed); seen[seed] = true; count = 1
+                        var cursor = 0
+                        while cursor < count {
+                            let index = Int(q[cursor]); cursor += 1
+                            let px = index % size, py = index / size
+                            if px < minX { minX = px } else if px > maxX { maxX = px }
+                            if py < minY { minY = py } else if py > maxY { maxY = py }
+                            var next = index - 1
+                            if px > 0, !seen[next], lineBuffer[next] >= 200 {
+                                seen[next] = true; q[count] = Int32(next); count += 1
+                            }
+                            next = index + 1
+                            if px + 1 < size, !seen[next], lineBuffer[next] >= 200 {
+                                seen[next] = true; q[count] = Int32(next); count += 1
+                            }
+                            next = index - size
+                            if py > 0, !seen[next], lineBuffer[next] >= 200 {
+                                seen[next] = true; q[count] = Int32(next); count += 1
+                            }
+                            next = index + size
+                            if py + 1 < size, !seen[next], lineBuffer[next] >= 200 {
+                                seen[next] = true; q[count] = Int32(next); count += 1
+                            }
                         }
                     }
                 }
             }
-        }
-        let bounds = CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
-        let style = glitterStyle.rawValue
-        paint.withUnsafeMutableBufferPointer { paintBuffer in
-            glitterMask.withUnsafeMutableBufferPointer { mask in
-                for i in 0..<count {
-                    let index = Int(queue[i])
-                    let px = index % size, py = index / size
-                    let base = options.sample(color: color, x: px, y: py, size: size, bounds: bounds)
-                    let rgb = Self.texture(base, style: glitterStyle, x: px, y: py)
-                    mask[index] = style
-                    let offset = index * 4
-                    paintBuffer[offset] = rgb.0; paintBuffer[offset + 1] = rgb.1
-                    paintBuffer[offset + 2] = rgb.2; paintBuffer[offset + 3] = 255
+            let bounds = CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
+            let style = glitterStyle.rawValue
+            paint.withUnsafeMutableBufferPointer { paintBuffer in
+                glitterMask.withUnsafeMutableBufferPointer { mask in
+                    for i in 0..<count {
+                        let index = Int(queue[i])
+                        let px = index % size, py = index / size
+                        let base = options.sample(color: color, x: px, y: py, size: size, bounds: bounds)
+                        let rgb = Self.texture(base, style: glitterStyle, x: px, y: py)
+                        mask[index] = style
+                        let offset = index * 4
+                        paintBuffer[offset] = rgb.0; paintBuffer[offset + 1] = rgb.1
+                        paintBuffer[offset + 2] = rgb.2; paintBuffer[offset + 3] = 255
+                    }
                 }
             }
         }
@@ -450,11 +472,14 @@ final class CanvasEngine: ObservableObject {
 
     func draw(from start: CGPoint, to end: CGPoint, tool: DrawingTool, width: CGFloat,
               color: PaintColor = PaintColor.palette[0], glitterStyle: GlitterStyle = .none,
-              options: PaintOptions = PaintOptions(), render: Bool = true) {
+              options: PaintOptions = PaintOptions(), symmetry: Int = 0, render: Bool = true) {
         guard tool != .fill else { return }
         if tool == .brush || tool == .eraser {
-            drawBrush(from: start, to: end, width: width, color: color, glitterStyle: glitterStyle,
-                      options: options, erasing: tool == .eraser)
+            // A round-capped segment stays a round-capped segment when turned or mirrored.
+            for transform in Self.symmetryTransforms(symmetry, side: 1) {
+                drawBrush(from: start.applying(transform), to: end.applying(transform), width: width,
+                          color: color, glitterStyle: glitterStyle, options: options, erasing: tool == .eraser)
+            }
             if render { refresh() }
             return
         }
@@ -471,22 +496,28 @@ final class CanvasEngine: ObservableObject {
             let b = CGPoint(x: end.x * CGFloat(size), y: end.y * CGFloat(size))
             let rect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
                               width: abs(a.x - b.x), height: abs(a.y - b.y))
-            switch tool {
-            case .pencil:
-                context.move(to: a)
-                context.addLine(to: b)
-                context.strokePath()
-            case .circle:
-                context.strokeEllipse(in: rect)
-            case .square:
-                context.stroke(rect)
-            case .triangle:
-                context.move(to: CGPoint(x: rect.midX, y: rect.minY))
-                context.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-                context.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-                context.closePath()
-                context.strokePath()
-            case .fill, .eraser, .brush: break
+            // Shapes are turned with the context, since a turned square is no longer an axis-aligned rect.
+            for transform in Self.symmetryTransforms(symmetry, side: CGFloat(size)) {
+                context.saveGState()
+                context.concatenate(transform)
+                switch tool {
+                case .pencil:
+                    context.move(to: a)
+                    context.addLine(to: b)
+                    context.strokePath()
+                case .circle:
+                    context.strokeEllipse(in: rect)
+                case .square:
+                    context.stroke(rect)
+                case .triangle:
+                    context.move(to: CGPoint(x: rect.midX, y: rect.minY))
+                    context.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+                    context.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+                    context.closePath()
+                    context.strokePath()
+                case .fill, .eraser, .brush: break
+                }
+                context.restoreGState()
             }
         }
         if render { refresh() }
@@ -557,15 +588,15 @@ final class CanvasEngine: ObservableObject {
         refresh(sparkles: false)
     }
 
-    func erase(at point: CGPoint, width: CGFloat) {
+    func erase(at point: CGPoint, width: CGFloat, symmetry: Int = 0) {
         guard point.x >= 0, point.y >= 0, point.x < 1, point.y < 1 else { return }
         let index = Int(point.y * CGFloat(size)) * size + Int(point.x * CGFloat(size))
         if lines[index] < 200 {
             beginStroke()
-            draw(from: point, to: point, tool: .eraser, width: width)
+            draw(from: point, to: point, tool: .eraser, width: width, symmetry: symmetry)
             endStroke()
         } else {
-            fill(at: point, color: PaintColor.palette[19], glitterStyle: .none)
+            fill(at: point, color: PaintColor.palette[19], glitterStyle: .none, symmetry: symmetry)
         }
     }
 

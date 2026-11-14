@@ -291,6 +291,46 @@ final class CanvasEngineTests: XCTestCase {
         XCTAssertEqual(converted.glitterMask, original.glitterMask)
     }
 
+    func testMirrorRepeatsBrushStrokesAroundTheCenterInOneUndoStep() {
+        let engine = CanvasEngine(template: nil, size: 200, restore: false)
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.6, y: 0.2), to: CGPoint(x: 0.6, y: 0.2), tool: .brush, width: 30,
+                    color: red, symmetry: 4)
+        engine.endStroke()
+        // Four turns, each also mirrored: every point (±0.1, ±0.3) and (±0.3, ±0.1) from the center.
+        for point in [(0.6, 0.2), (0.4, 0.2), (0.6, 0.8), (0.4, 0.8), (0.8, 0.4), (0.8, 0.6), (0.2, 0.4), (0.2, 0.6)] {
+            XCTAssertEqual(pixel(engine, point.0, point.1), [red.red, red.green, red.blue], "\(point)")
+        }
+        XCTAssertEqual(pixel(engine, 0.5, 0.5), [255, 255, 255])
+        XCTAssertEqual(pixel(engine, 0.1, 0.1), [255, 255, 255])
+        XCTAssertEqual(engine.undoCount, 1)
+        engine.undo()
+        XCTAssertTrue(engine.paint.allSatisfy { $0 == 255 })
+    }
+
+    func testMirroredShapesAndFillReachEveryMatchingSpace() {
+        let engine = CanvasEngine(template: nil, size: 200, restore: false)
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.6, y: 0.15), to: CGPoint(x: 0.7, y: 0.25), tool: .square, width: 6,
+                    symmetry: 4)
+        engine.endStroke()
+        let centers = [(0.65, 0.2), (0.35, 0.2), (0.65, 0.8), (0.35, 0.8),
+                       (0.8, 0.35), (0.8, 0.65), (0.2, 0.35), (0.2, 0.65)]
+        for center in centers {
+            XCTAssertLessThan(engine.lines[Int(center.1 * 200 - 10) * 200 + Int(center.0 * 200)], 200,
+                              "A mirrored square should have an outline above \(center)")
+        }
+        let before = engine.undoCount
+        XCTAssertTrue(engine.fill(at: CGPoint(x: 0.65, y: 0.2), color: blue, glitterStyle: .none, symmetry: 4))
+        for center in centers {
+            XCTAssertEqual(pixel(engine, center.0, center.1), [blue.red, blue.green, blue.blue], "\(center)")
+        }
+        XCTAssertEqual(pixel(engine, 0.5, 0.5), [255, 255, 255], "The space around the squares stays white")
+        XCTAssertEqual(engine.undoCount, before + 1)
+        engine.undo()
+        XCTAssertEqual(pixel(engine, 0.35, 0.8), [255, 255, 255])
+    }
+
     func testCatalogHasLargeDistinctCollectionsAndEnclosedColorableRegions() {
         XCTAssertGreaterThanOrEqual(MandalaTemplate.all.count, 96)
         XCTAssertEqual(Set(MandalaTemplate.all.map(\.id)).count, MandalaTemplate.all.count)

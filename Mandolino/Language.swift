@@ -5,6 +5,9 @@ enum L {
     private static let german: [String: String] = [
         "Easy" : "Einfach",
         "Settings" : "Einstellungen",
+        "Mirror" : "Spiegel",
+        "Off" : "Aus",
+        "Everything you draw and fill now repeats around the middle." : "Alles, was du malst und füllst, wiederholt sich jetzt rund um die Mitte.",
         "Medium" : "Mittel",
         "Hard" : "Schwierig",
         "Expert" : "Profi",
