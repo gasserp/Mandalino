@@ -25,6 +25,8 @@ enum Theme {
     static let ink = Color(red: 0.17, green: 0.23, blue: 0.28)
     static let teal = Color(red: 0.08, green: 0.48, blue: 0.46)
     static let peach = Color(red: 1, green: 0.79, blue: 0.65)
+    static let lilac = Color(red: 0.94, green: 0.91, blue: 1)
+    static let violet = Color(red: 0.42, green: 0.29, blue: 0.72)
 }
 
 struct GalleryView: View {

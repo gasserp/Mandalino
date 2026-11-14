@@ -375,6 +375,39 @@ final class CanvasEngine: ObservableObject {
         return true
     }
 
+    private static let swatchCache = NSCache<NSString, UIImage>()
+
+    /// A small sample of how a paint looks on the page, at the page's own scale, for the glitter and
+    /// pattern buttons.
+    static func swatch(color: PaintColor, glitter: GlitterStyle, options: PaintOptions) -> UIImage {
+        let second = options.secondColor
+        let key = "\(color.red),\(color.green),\(color.blue)|\(glitter.rawValue)|\(options.effect.rawValue)|\(second.red),\(second.green),\(second.blue)|\(options.direction.rawValue)" as NSString
+        if let cached = swatchCache.object(forKey: key) { return cached }
+        let side = 72
+        var pixels = [UInt8](repeating: 255, count: side * side * 4)
+        let bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        for y in 0..<side {
+            for x in 0..<side {
+                let base = options.sample(color: color, x: x, y: y, size: resolution, bounds: bounds)
+                let rgb = texture(base, style: glitter, x: x, y: y)
+                let offset = (y * side + x) * 4
+                pixels[offset] = rgb.0; pixels[offset + 1] = rgb.1; pixels[offset + 2] = rgb.2
+            }
+        }
+        let image = pixels.withUnsafeMutableBytes { bytes -> UIImage in
+            guard let context = CGContext(data: bytes.baseAddress, width: side, height: side,
+                                          bitsPerComponent: 8, bytesPerRow: side * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  let cgImage = context.makeImage() else {
+                preconditionFailure("Cannot render swatch")
+            }
+            return UIImage(cgImage: cgImage)
+        }
+        swatchCache.setObject(image, forKey: key)
+        return image
+    }
+
     private static func noise(x: Int, y: Int) -> UInt32 {
         var value = UInt32(truncatingIfNeeded: x) &* 374_761_393
             &+ UInt32(truncatingIfNeeded: y) &* 668_265_263
