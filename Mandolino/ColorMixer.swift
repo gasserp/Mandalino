@@ -1,24 +1,27 @@
 import SwiftUI
 
+// Each tap on a color drops one part of it into the bowl, so the amounts are something she can see and count.
 struct ColorMixer: View {
     @AppStorage("appLanguage") private var language = "de"
     @Environment(\.dismiss) private var dismiss
     private struct Ingredient: Identifiable {
-        let id = UUID()
-        var color: PaintColor
-        var amount: Double = 50
+        let color: PaintColor
+        var drops = 1
+        var id: Int { color.id }
     }
 
-    @State private var ingredients: [Ingredient]
-    @State private var selectedID: UUID
+    private static let maxDrops = 10
+    private static let maxIngredients = 6
+
+    @State private var ingredients: [Ingredient] = []
     let use: (PaintColor) -> Void
-    private var mixed: PaintColor { PaintColor.mix(ingredients.map { ($0.color, $0.amount) }) }
-    private var total: Double { ingredients.reduce(0) { $0 + $1.amount } }
+
+    private var total: Int { ingredients.reduce(0) { $0 + $1.drops } }
+    private var mixed: PaintColor? {
+        ingredients.isEmpty ? nil : PaintColor.mix(ingredients.map { ($0.color, Double($0.drops)) })
+    }
 
     init(use: @escaping (PaintColor) -> Void) {
-        let initial = [Ingredient(color: PaintColor.palette[1]), Ingredient(color: PaintColor.palette[4])]
-        _ingredients = State(initialValue: initial)
-        _selectedID = State(initialValue: initial[0].id)
         self.use = use
     }
 
@@ -29,35 +32,43 @@ struct ColorMixer: View {
                     Text(L.text("Mix colors"))
                         .font(.system(size: 30, weight: .heavy, design: .rounded))
                     Spacer()
-                    Button(L.text("Close")) { dismiss() }
-                }
-                Text(L.text("Pick colors and adjust their amounts."))
-                    .font(.system(size: 18, design: .rounded))
-                ForEach($ingredients) { $ingredient in
-                    if let index = ingredients.firstIndex(where: { $0.id == ingredient.id }) {
-                        ingredientRow($ingredient, index: index)
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 18, weight: .bold))
+                            .frame(width: 48, height: 48)
+                            .background(.white, in: Circle())
                     }
+                    .accessibilityLabel(L.text("Close"))
+                    .accessibilityIdentifier("mix-close")
                 }
-                Button {
-                    let ingredient = Ingredient(color: PaintColor.palette[10])
-                    ingredients.append(ingredient)
-                    selectedID = ingredient.id
-                } label: {
-                    Label(L.text("Add color"), systemImage: "plus.circle.fill")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                }
-                .accessibilityIdentifier("mix-add-color")
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 12) {
-                    ForEach(PaintColor.palette) { color in
-                        Button {
-                            if let index = ingredients.firstIndex(where: { $0.id == selectedID }) {
-                                ingredients[index].color = color
-                                if index == 0, ingredients.count > 1 { selectedID = ingredients[1].id }
+                HStack(spacing: 24) {
+                    bowl
+                    VStack(alignment: .leading, spacing: 10) {
+                        if ingredients.isEmpty {
+                            Text(L.text("Tap a color to drop it in."))
+                                .font(.system(size: 18, weight: .medium, design: .rounded))
+                                .foregroundStyle(Theme.ink.opacity(0.7))
+                        } else {
+                            ForEach(Array(ingredients.enumerated()), id: \.element.id) { index, ingredient in
+                                ingredientRow(ingredient, index: index)
                             }
-                        } label: {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.25)) { ingredients.removeAll() }
+                            } label: {
+                                Label(L.text("Start over"), systemImage: "arrow.counterclockwise")
+                                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            }
+                            .accessibilityIdentifier("mix-start-over")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 10), spacing: 10) {
+                    ForEach(PaintColor.palette) { color in
+                        Button { addDrop(of: color) } label: {
                             Circle().fill(Color(uiColor: color.uiColor))
-                                .frame(width: 56, height: 56)
                                 .overlay { Circle().stroke(Theme.ink.opacity(0.15)) }
+                                .aspectRatio(1, contentMode: .fit)
                         }
                         .accessibilityLabel(L.text(color.name))
                         .accessibilityIdentifier("mix-color-\(color.id)")
@@ -65,76 +76,105 @@ struct ColorMixer: View {
                 }
             }
             .foregroundStyle(Theme.ink)
-            .padding(30)
-            .frame(maxWidth: 660)
+            .padding(28)
+            .frame(maxWidth: 680)
             .frame(maxWidth: .infinity)
         }
         .background(Theme.cream)
         .safeAreaInset(edge: .bottom) {
-            HStack(spacing: 16) {
-                Circle().fill(Color(uiColor: mixed.uiColor))
-                    .frame(width: 64, height: 64)
-                    .overlay { Circle().stroke(Theme.ink.opacity(0.1)) }
-                    .accessibilityIdentifier("mixed-preview")
-                Text(L.text("Your new color"))
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                Button { use(mixed) } label: {
-                    Text(L.text("Use this color"))
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                        .foregroundStyle(.white)
-                        .background(Theme.teal, in: RoundedRectangle(cornerRadius: 18))
-                }
-                .accessibilityIdentifier("use-mixed-color")
+            Button { if let mixed { use(mixed) } } label: {
+                Text(L.text("Use this color"))
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .frame(maxWidth: .infinity, minHeight: 60)
+                    .foregroundStyle(.white)
+                    .background(Theme.teal, in: RoundedRectangle(cornerRadius: 18))
             }
+            .disabled(mixed == nil)
+            .opacity(mixed == nil ? 0.4 : 1)
+            .accessibilityIdentifier("use-mixed-color")
             .padding(20)
             .background(Theme.cream)
         }
     }
 
-    private func ingredientRow(_ ingredient: Binding<Ingredient>, index: Int) -> some View {
-        let value = ingredient.wrappedValue
-        return VStack(spacing: 10) {
-            HStack(spacing: 16) {
-                Button { selectedID = value.id } label: {
-                    HStack(spacing: 12) {
-                        Circle().fill(Color(uiColor: value.color.uiColor))
-                            .frame(width: 48, height: 48)
-                            .overlay { Circle().stroke(selectedID == value.id ? Theme.teal : .clear, lineWidth: 3) }
-                        Text(L.text(value.color.name))
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                    }
-                }
-                .accessibilityAddTraits(selectedID == value.id ? .isSelected : [])
-                .accessibilityIdentifier(index == 0 ? "mix-first" : index == 1 ? "mix-second" :
-                                         "mix-ingredient-\(value.id)")
-                Spacer()
-                Text("\(Int((value.amount / total * 100).rounded()))%")
-                    .monospacedDigit()
-                Button {
-                    ingredients.removeAll { $0.id == value.id }
-                    if selectedID == value.id { selectedID = ingredients[0].id }
-                } label: {
-                    Image(systemName: "minus.circle")
-                        .font(.title2)
-                        .frame(width: 44, height: 44)
-                }
-                .disabled(ingredients.count == 1)
-                .accessibilityLabel(L.text("Remove color"))
-                .accessibilityIdentifier("mix-remove-\(index)")
-            }
-            HStack {
-                Text(L.text("Amount"))
-                Slider(value: ingredient.amount, in: 1...100, step: 1)
-                    .accessibilityLabel("\(L.text("Amount")): \(L.text(value.color.name))")
-                    .accessibilityValue("\(Int(value.amount)) \(L.text("Parts"))")
-                    .accessibilityIdentifier("mix-amount-\(index)")
-                Text("\(Int(value.amount)) \(L.text("Parts"))")
-                    .font(.system(size: 14, design: .rounded))
-                    .monospacedDigit()
+    private var bowl: some View {
+        ZStack {
+            if let mixed {
+                Circle().fill(Color(uiColor: mixed.uiColor))
+                    .overlay { Circle().stroke(.white, lineWidth: 8) }
+                    .shadow(color: Theme.ink.opacity(0.15), radius: 10, y: 4)
+            } else {
+                Circle().strokeBorder(Theme.ink.opacity(0.25), style: StrokeStyle(lineWidth: 3, dash: [8, 6]))
+                Image(systemName: "drop")
+                    .font(.system(size: 44, weight: .semibold))
+                    .foregroundStyle(Theme.ink.opacity(0.3))
             }
         }
-        .padding(16)
-        .background(.white, in: RoundedRectangle(cornerRadius: 18))
+        .frame(width: 180, height: 180)
+        .animation(.easeInOut(duration: 0.35), value: mixed.map { "\($0.red),\($0.green),\($0.blue)" })
+        .accessibilityElement()
+        .accessibilityLabel(L.text("Your new color"))
+        .accessibilityIdentifier("mixed-preview")
+    }
+
+    private func ingredientRow(_ ingredient: Ingredient, index: Int) -> some View {
+        let percent = Int((Double(ingredient.drops) / Double(total) * 100).rounded())
+        let tint = Color(uiColor: ingredient.color.uiColor)
+        return HStack(spacing: 8) {
+            stepButton("minus", label: "Remove a drop", id: "mix-less-\(index)") { removeDrop(at: index) }
+            HStack(spacing: 1) {
+                ForEach(0..<ingredient.drops, id: \.self) { _ in
+                    Image(systemName: "drop.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(tint)
+                        .overlay {
+                            Image(systemName: "drop").font(.system(size: 18)).foregroundStyle(Theme.ink.opacity(0.25))
+                        }
+                }
+            }
+            .frame(width: 150, alignment: .leading)
+            stepButton("plus", label: "Add a drop", id: "mix-more-\(index)") { addDrop(of: ingredient.color) }
+                .disabled(ingredient.drops >= Self.maxDrops)
+                .opacity(ingredient.drops >= Self.maxDrops ? 0.4 : 1)
+            Text("\(percent)%")
+                .font(.system(size: 14, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(Theme.ink.opacity(0.6))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(L.text(ingredient.color.name)): \(ingredient.drops) \(L.text("drops")), \(percent)%")
+    }
+
+    private func stepButton(_ symbol: String, label: String, id: String,
+                            perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .bold))
+                .frame(width: 40, height: 40)
+                .foregroundStyle(Theme.teal)
+                .background(.white, in: Circle())
+        }
+        .accessibilityLabel(L.text(label))
+        .accessibilityIdentifier(id)
+    }
+
+    private func addDrop(of color: PaintColor) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+            if let index = ingredients.firstIndex(where: { $0.color.id == color.id }) {
+                ingredients[index].drops = min(ingredients[index].drops + 1, Self.maxDrops)
+            } else if ingredients.count < Self.maxIngredients {
+                ingredients.append(Ingredient(color: color))
+            }
+        }
+    }
+
+    private func removeDrop(at index: Int) {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+            if ingredients[index].drops > 1 {
+                ingredients[index].drops -= 1
+            } else {
+                ingredients.remove(at: index)
+            }
+        }
     }
 }

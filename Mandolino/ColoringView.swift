@@ -145,10 +145,16 @@ struct ColoringView: View {
             Text(engine.errorMessage ?? "")
         }
         .sheet(isPresented: $mixing) {
-            ColorMixer { color in
+            let mixer = ColorMixer { color in
                 select(color)
                 remember(color)
                 mixing = false
+            }
+            // A page-sized sheet keeps the bowl and every color in view without scrolling.
+            if #available(iOS 18.0, *) {
+                mixer.presentationSizing(.page)
+            } else {
+                mixer
             }
         }
     }
