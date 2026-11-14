@@ -6,6 +6,7 @@ enum L {
         "Easy" : "Einfach",
         "Settings" : "Einstellungen",
         "Mirror" : "Spiegel",
+        "New drawing" : "Neues Bild",
         "Off" : "Aus",
         "Everything you draw and fill now repeats around the middle." : "Alles, was du malst und füllst, wiederholt sich jetzt rund um die Mitte.",
         "Medium" : "Mittel",

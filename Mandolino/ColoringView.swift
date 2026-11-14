@@ -62,9 +62,9 @@ struct ColoringView: View {
     private static let myColorSlots = 6
     private static let lineTools: [DrawingTool] = [.pencil, .circle, .square, .triangle]
 
-    init(template: MandalaTemplate?) {
+    init(template: MandalaTemplate?, documentID: String? = nil) {
         self.template = template
-        _engine = StateObject(wrappedValue: CanvasEngine(template: template))
+        _engine = StateObject(wrappedValue: CanvasEngine(template: template, documentID: documentID))
     }
 
     // One glitter choice for every color, kept until she changes it.

@@ -35,10 +35,11 @@ struct GalleryView: View {
     @State private var openedPageID: String?
     @State private var previewRevisions: [String: Int] = [:]
     @State private var showingSettings = false
+    @State private var ownDrawings: [String] = []
 
     struct Page: Identifiable {
         let template: MandalaTemplate?
-        var id: String { template?.id ?? "free-draw" }
+        let id: String
     }
 
     var body: some View {
@@ -67,26 +68,7 @@ struct GalleryView: View {
                     .popover(isPresented: $showingSettings) { settings }
                 }
 
-                Button { open(nil) } label: {
-                    HStack(spacing: 20) {
-                        ArtworkPreview(template: nil, revision: previewRevisions["free-draw", default: 0])
-                            .frame(width: 96, height: 96)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(L.text("Make your own magic"))
-                                .font(.system(size: 25, weight: .bold, design: .rounded))
-                            Text(L.text("Draw lines & shapes, then fill them with color."))
-                                .font(.system(size: 17, design: .rounded))
-                        }
-                        Spacer()
-                        Image(systemName: "arrow.right.circle.fill").font(.system(size: 34))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(26)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.teal.gradient, in: RoundedRectangle(cornerRadius: 26))
-                }
-                .accessibilityIdentifier("free-draw")
+                ownDrawingsCard
 
                 Text(L.text("Pick a coloring page"))
                     .font(.system(size: 25, weight: .bold, design: .rounded))
@@ -123,12 +105,55 @@ struct GalleryView: View {
             .frame(maxWidth: .infinity)
         }
         .background(Theme.cream)
+        .onAppear { ownDrawings = CanvasEngine.ownDrawingIDs() }
         .fullScreenCover(item: $selectedPage, onDismiss: {
             // Only the page that was just colored needs a new preview.
             if let openedPageID { previewRevisions[openedPageID, default: 0] += 1 }
+            ownDrawings = CanvasEngine.ownDrawingIDs()
         }) { page in
-            ColoringView(template: page.template)
+            ColoringView(template: page.template, documentID: page.id)
         }
+    }
+
+    // Her own drawings, newest first, after a tile that starts a new one. Each is saved on its own.
+    private var ownDrawingsCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L.text("Make your own magic"))
+                    .font(.system(size: 25, weight: .bold, design: .rounded))
+                Text(L.text("Draw lines & shapes, then fill them with color."))
+                    .font(.system(size: 17, design: .rounded))
+            }
+            .foregroundStyle(.white)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    Button { openPage(template: nil, id: CanvasEngine.newOwnDrawingID()) } label: {
+                        VStack(spacing: 6) {
+                            Image(systemName: "plus").font(.system(size: 34, weight: .bold))
+                            Text(L.text("New drawing"))
+                                .font(.system(size: 14, weight: .bold, design: .rounded))
+                                .multilineTextAlignment(.center)
+                        }
+                        .foregroundStyle(Theme.teal)
+                        .frame(width: 110, height: 110)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    }
+                    .accessibilityIdentifier("new-drawing")
+                    ForEach(ownDrawings, id: \.self) { id in
+                        Button { openPage(template: nil, id: id) } label: {
+                            ArtworkPreview(template: nil, documentID: id, revision: previewRevisions[id, default: 0])
+                                .frame(width: 110, height: 110)
+                                .clipShape(RoundedRectangle(cornerRadius: 16))
+                        }
+                        .accessibilityLabel(L.text("My own magic"))
+                        .accessibilityIdentifier("own-\(id)")
+                    }
+                }
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.teal.gradient, in: RoundedRectangle(cornerRadius: 26))
     }
 
     private var settings: some View {
@@ -186,10 +211,13 @@ struct GalleryView: View {
         }
     }
 
-    private func open(_ template: MandalaTemplate?) {
-        let page = Page(template: template)
-        openedPageID = page.id
-        selectedPage = page
+    private func open(_ template: MandalaTemplate) {
+        openPage(template: template, id: template.id)
+    }
+
+    private func openPage(template: MandalaTemplate?, id: String) {
+        openedPageID = id
+        selectedPage = Page(template: template, id: id)
     }
 }
 
@@ -210,7 +238,9 @@ struct TemplateCard: View {
 
 struct ArtworkPreview: View {
     let template: MandalaTemplate?
+    var documentID: String? = nil
     let revision: Int
+    private var id: String { documentID ?? template?.id ?? CanvasEngine.firstOwnDrawingID }
     @State private var preview: UIImage?
     @State private var errorMessage: String?
 
@@ -228,10 +258,10 @@ struct ArtworkPreview: View {
             }
         }
         .background(.white)
-        .accessibilityIdentifier("preview-\(template?.id ?? "free-draw")")
+        .accessibilityIdentifier("preview-\(id)")
         .task(id: revision) {
             do {
-                preview = try await PreviewRenderer.shared.image(for: template, revision: revision)
+                preview = try await PreviewRenderer.shared.image(for: template, id: id, revision: revision)
                 errorMessage = nil
             } catch is CancellationError {
                 return
@@ -247,8 +277,7 @@ private actor PreviewRenderer {
     static let shared = PreviewRenderer()
     private let cache = NSCache<NSString, UIImage>()
 
-    func image(for template: MandalaTemplate?, revision: Int) throws -> UIImage {
-        let id = template?.id ?? "free-draw"
+    func image(for template: MandalaTemplate?, id: String, revision: Int) throws -> UIImage {
         let key = "\(id)#\(revision)" as NSString
         if let cached = cache.object(forKey: key) { return cached }
         try Task.checkCancellation()
@@ -257,7 +286,7 @@ private actor PreviewRenderer {
             image = saved
         } else {
             // Untouched pages and drawings saved before thumbnails existed.
-            image = try CanvasEngine.preview(template: template)
+            image = try CanvasEngine.preview(template: template, documentID: id)
         }
         cache.setObject(image, forKey: key)
         return image

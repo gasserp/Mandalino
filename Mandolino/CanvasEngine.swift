@@ -225,9 +225,11 @@ final class CanvasEngine: ObservableObject {
     private var revision = 0
     private var dirty = false
 
-    init(template: MandalaTemplate?, size: Int = CanvasEngine.resolution, restore: Bool = true) {
+    /// Own drawings have no template; each one is told apart by its `documentID` (see `ownDrawingIDs`).
+    init(template: MandalaTemplate?, documentID: String? = nil, size: Int = CanvasEngine.resolution,
+         restore: Bool = true) {
         self.template = template
-        self.documentID = template?.id ?? "free-draw"
+        self.documentID = documentID ?? template?.id ?? Self.firstOwnDrawingID
         self.size = size
         lines = [UInt8](repeating: 255, count: size * size)
         originalLines = lines
@@ -236,8 +238,8 @@ final class CanvasEngine: ObservableObject {
         renderOriginal()
         if restore {
             do {
-                let url = try Self.fileURL(documentID, "mandolino")
-                let legacyURL = try Self.fileURL(documentID, "json")
+                let url = try Self.fileURL(self.documentID, "mandolino")
+                let legacyURL = try Self.fileURL(self.documentID, "json")
                 let saved: CanvasSnapshot?
                 if FileManager.default.fileExists(atPath: url.path) {
                     saved = try Self.decode(Data(contentsOf: url))
@@ -703,9 +705,9 @@ final class CanvasEngine: ObservableObject {
         for file in files where file.pathExtension == "json" {
             let id = file.deletingPathExtension().lastPathComponent
             let template = MandalaTemplate.all.first { $0.id == id }
-            guard template != nil || id == "free-draw" else { continue }
+            guard template != nil || id.hasPrefix(firstOwnDrawingID) else { continue }
             saveQueue.sync {
-                let engine = CanvasEngine(template: template)
+                let engine = CanvasEngine(template: template, documentID: id)
                 // An unreadable drawing stays as it is, so opening the page still reports the problem.
                 guard engine.errorMessage == nil else { return }
                 try? write(engine.snapshot, image: engine.image, documentID: id)
@@ -729,8 +731,32 @@ final class CanvasEngine: ObservableObject {
         try fileURL(documentID, "png")
     }
 
-    static func preview(template: MandalaTemplate?, side: CGFloat = 300) throws -> UIImage {
-        let engine = CanvasEngine(template: template)
+    /// The first own drawing keeps the ID it always had, so drawings saved before there could be
+    /// several still open; later ones get this prefix plus a unique suffix.
+    static let firstOwnDrawingID = "free-draw"
+
+    static func newOwnDrawingID() -> String {
+        "\(firstOwnDrawingID)-\(UUID().uuidString)"
+    }
+
+    /// Saved own drawings, most recently changed first. A new drawing she leaves empty is never saved,
+    /// so it does not show up here.
+    static func ownDrawingIDs() -> [String] {
+        guard let folder = try? drawingsFolder(),
+              let files = try? FileManager.default.contentsOfDirectory(
+                  at: folder, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        var newest: [String: Date] = [:]
+        for file in files where ["mandolino", "json"].contains(file.pathExtension) {
+            let id = file.deletingPathExtension().lastPathComponent
+            guard id.hasPrefix(firstOwnDrawingID) else { continue }
+            let date = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            newest[id] = max(newest[id] ?? .distantPast, date ?? .distantPast)
+        }
+        return newest.sorted { $0.value > $1.value }.map(\.key)
+    }
+
+    static func preview(template: MandalaTemplate?, documentID: String? = nil, side: CGFloat = 300) throws -> UIImage {
+        let engine = CanvasEngine(template: template, documentID: documentID)
         if let error = engine.errorMessage {
             throw NSError(domain: "CanvasPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: error])
         }
