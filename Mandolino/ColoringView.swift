@@ -414,10 +414,13 @@ struct ColoringView: View {
             .background(selected ? Theme.teal : Theme.cream, in: RoundedRectangle(cornerRadius: 16))
             .overlay(alignment: .topTrailing) {
                 if showsColor {
-                    Circle().fill(Color(uiColor: selectedColor.uiColor))
-                        .frame(width: 16, height: 16)
+                    // Shows the paint as it will look, so an active pattern or glitter is visible here too.
+                    Image(uiImage: CanvasEngine.swatch(color: selectedColor, glitter: glitterStyle, options: paintOptions))
+                        .resizable()
+                        .frame(width: 20, height: 20)
+                        .clipShape(Circle())
                         .overlay { Circle().stroke(.white, lineWidth: 2) }
-                        .padding(6)
+                        .padding(5)
                 }
             }
         }
@@ -501,14 +504,8 @@ struct ColoringView: View {
     // shorter Magic drawer let the tray drop and the Colors button was no longer under her finger.
     private func drawer(columns: Int) -> some View {
         ZStack(alignment: .top) {
-            colorGrid(columns: columns)
-                .opacity(showingMagic ? 0 : 1)
-                .allowsHitTesting(!showingMagic)
-                .accessibilityHidden(showingMagic)
-            magicPanel(sideBySide: columns > 3)
-                .opacity(showingMagic ? 1 : 0)
-                .allowsHitTesting(showingMagic)
-                .accessibilityHidden(!showingMagic)
+            colorGrid(columns: columns).shown(!showingMagic)
+            magicPanel(sideBySide: columns > 3).shown(showingMagic)
         }
     }
 
@@ -621,7 +618,8 @@ struct ColoringView: View {
                 glitterChoices(columns: 3)
                 patternChoices(columns: 3)
             }
-            if paintOptions.effect != .solid {
+            // Always laid out, hidden for solid paint, so choosing a pattern never changes the tray's height.
+            Group {
                 if sideBySide {
                     HStack(spacing: 8) { endpoints; directions }
                 } else {
@@ -629,6 +627,7 @@ struct ColoringView: View {
                     directions
                 }
             }
+            .shown(paintOptions.effect != .solid)
         }
     }
 
@@ -684,7 +683,7 @@ struct ColoringView: View {
             endpoint("From", color: selectedColor, id: "gradient-from") { choosingStartColor = true }
                 .popover(isPresented: $choosingStartColor) {
                     paletteGrid(idPrefix: "endpoint-color-") { color in
-                        select(color)
+                        select(color, keepPattern: true)
                         choosingStartColor = false
                     }
                 }
@@ -698,24 +697,23 @@ struct ColoringView: View {
         }
     }
 
-    @ViewBuilder private var directions: some View {
-        if paintOptions.effect == .gradient {
-            HStack(spacing: 8) {
-                ForEach(GradientDirection.allCases) { direction in
-                    let selected = paintOptions.direction == direction
-                    Button { paintOptions.direction = direction } label: {
-                        Image(systemName: symbol(for: direction))
-                            .font(.system(size: 20, weight: .bold))
-                            .frame(width: 48, height: 44)
-                            .foregroundStyle(selected ? .white : Theme.teal)
-                            .background(selected ? Theme.teal : Theme.cream, in: RoundedRectangle(cornerRadius: 12))
-                    }
-                    .accessibilityLabel(direction.title)
-                    .accessibilityAddTraits(selected ? .isSelected : [])
-                    .accessibilityIdentifier("direction-\(direction.rawValue)")
+    private var directions: some View {
+        HStack(spacing: 8) {
+            ForEach(GradientDirection.allCases) { direction in
+                let selected = paintOptions.direction == direction
+                Button { paintOptions.direction = direction } label: {
+                    Image(systemName: symbol(for: direction))
+                        .font(.system(size: 20, weight: .bold))
+                        .frame(width: 48, height: 44)
+                        .foregroundStyle(selected ? .white : Theme.teal)
+                        .background(selected ? Theme.teal : Theme.cream, in: RoundedRectangle(cornerRadius: 12))
                 }
+                .accessibilityLabel(direction.title)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityIdentifier("direction-\(direction.rawValue)")
             }
         }
+        .shown(paintOptions.effect == .gradient)
     }
 
     private func endpoint(_ title: String, color: PaintColor, id: String,
@@ -753,8 +751,12 @@ struct ColoringView: View {
         Int(color.red) + Int(color.green) + Int(color.blue) > 560 ? Theme.ink : .white
     }
 
-    private func select(_ color: PaintColor) {
+    // Picking a color from the color drawer means plain paint again: a pattern chosen earlier in Magic
+    // is easy to forget once the drawer is closed, and she kept painting dots without noticing.
+    // Only From inside Magic keeps the pattern. Glitter stays as set, as decided earlier.
+    private func select(_ color: PaintColor, keepPattern: Bool = false) {
         selectedColor = color
+        if !keepPattern { paintOptions.effect = .solid }
         if tool != .brush { tool = .fill }
     }
 
@@ -763,6 +765,14 @@ struct ColoringView: View {
         let entry = "\(color.red),\(color.green),\(color.blue)"
         let others = myColorsRaw.split(separator: ";").map(String.init).filter { $0 != entry }
         myColorsRaw = ([entry] + others).prefix(Self.myColorSlots).joined(separator: ";")
+    }
+}
+
+extension View {
+    /// Keeps the view's space in the layout but hides it from sight, touch, and VoiceOver when not visible.
+    /// Opacity alone left hidden buttons findable, so taps meant for them landed on the view underneath.
+    @ViewBuilder func shown(_ visible: Bool) -> some View {
+        if visible { self } else { hidden() }
     }
 }
 

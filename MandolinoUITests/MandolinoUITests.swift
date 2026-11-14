@@ -240,6 +240,9 @@ final class MandolinoUITests: XCTestCase {
         XCTAssertTrue(app.buttons["redo"].isEnabled)
         app.buttons["redo"].tap()
         screenshot("Erased freestyle stroke")
+        pickColor(10, in: app)
+        XCTAssertTrue(show("effect-solid", in: app).isSelected,
+                      "Picking a color after a pattern paints plain color again")
     }
 
     /// Returns the tray button with this identifier, first switching the drawer (colors or magic) that holds it.
