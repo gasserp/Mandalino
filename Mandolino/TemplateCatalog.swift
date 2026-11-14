@@ -78,9 +78,8 @@ struct MandalaTemplate: Identifiable {
             case .hard: count = 20 + variation * 4
             case .expert: count = 40 + variation * 8
             }
-            let inner = versionFrame(context, variation: variation, count: count,
+            let scale = versionFrame(context, variation: variation, count: count,
                                      jewel: difficulty == .easy ? 17 : 10)
-            let scale = (inner - 10) / 440
             context.translateBy(x: 500 * (1 - scale), y: 500 * (1 - scale))
             context.scaleBy(x: scale, y: scale)
         }
@@ -411,26 +410,29 @@ private func peacock(_ context: CGContext) {
     for x: CGFloat in [475, 500, 525] { circle(context, x, 310, 14) }
 }
 
-/// Draws the frame of a page version and returns the radius left free inside it for the design.
+/// Draws the frame of a page version and returns how much to shrink the design to fit inside it.
 /// Each version has its own style, so the six pages of a design no longer look almost the same.
 private func versionFrame(_ context: CGContext, variation: Int, count: Int, jewel: CGFloat) -> CGFloat {
     let petalWidth = min(2 * .pi * 395 / CGFloat(count) * 0.75, 110)
+    func fitting(_ inner: CGFloat) -> CGFloat { (inner - 10) / 440 }
     switch variation {
     case 1:
+        // Exactly the frame and size this version had before the others got their own styles, so
+        // pages colored in it still line up with the template (the eraser restores template lines).
         jeweledRing(context, inner: 365, outer: 440, count: count, jewel: jewel)
-        return 365
+        return 0.66 + 0.025
     case 2:
         circle(context, 500, 500, 350)
         petals(context, count: count, radius: 440, length: 95, width: petalWidth)
-        return 350
+        return fitting(350)
     case 3:
         circle(context, 500, 500, 345)
         petals(context, count: count, radius: 440, length: 100, width: petalWidth * 0.6, pointed: true)
-        return 345
+        return fitting(345)
     case 4:
         jeweledRing(context, inner: 365, outer: 440, count: count, jewel: jewel)
         ring(context, inner: 330, outer: 360, count: count)
-        return 330
+        return fitting(330)
     default:
         circle(context, 500, 500, 440)
         circle(context, 500, 500, 350)
@@ -440,7 +442,7 @@ private func versionFrame(_ context: CGContext, variation: Int, count: Int, jewe
             star(context, center: CGPoint(x: 500 + 395 * cos(angle), y: 500 + 395 * sin(angle)),
                  radius: min(34, 2 * .pi * 395 / CGFloat(stars) * 0.35))
         }
-        return 350
+        return fitting(350)
     }
 }
 
