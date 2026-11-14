@@ -35,24 +35,44 @@ struct MandalaTemplate: Identifiable {
         .init(id: "turtle", title: "Turtle", symbol: "tortoise", difficulty: .easy),
         .init(id: "rabbit", title: "Rabbit", symbol: "hare", difficulty: .easy),
         .init(id: "ladybug", title: "Ladybug", symbol: "ladybug", difficulty: .easy),
+        .init(id: "dolphin", title: "Dolphin", symbol: "fish", difficulty: .easy),
+        .init(id: "whale", title: "Whale", symbol: "fish", difficulty: .easy),
+        .init(id: "frog", title: "Frog", symbol: "leaf", difficulty: .easy),
+        .init(id: "duck", title: "Duck", symbol: "bird", difficulty: .easy),
+        .init(id: "mouse", title: "Mouse", symbol: "pawprint", difficulty: .easy),
         .init(id: "sunflower", title: "Sunflower", symbol: "sun.max", difficulty: .medium),
         .init(id: "owl", title: "Owl", symbol: "bird", difficulty: .medium),
         .init(id: "cat", title: "Cat", symbol: "cat", difficulty: .medium),
         .init(id: "lotus", title: "Lotus", symbol: "camera.macro", difficulty: .medium),
         .init(id: "hedgehog", title: "Hedgehog", symbol: "pawprint", difficulty: .medium),
         .init(id: "snail", title: "Snail", symbol: "leaf", difficulty: .medium),
+        .init(id: "dog", title: "Dog", symbol: "dog", difficulty: .medium),
+        .init(id: "pig", title: "Pig", symbol: "pawprint", difficulty: .medium),
+        .init(id: "sheep", title: "Sheep", symbol: "cloud", difficulty: .medium),
+        .init(id: "octopus", title: "Octopus", symbol: "fish", difficulty: .medium),
+        .init(id: "seahorse", title: "Seahorse", symbol: "fish", difficulty: .medium),
         .init(id: "rosette", title: "Rosette", symbol: "seal", difficulty: .hard),
         .init(id: "lion", title: "Lion", symbol: "pawprint", difficulty: .hard),
         .init(id: "fox", title: "Fox", symbol: "pawprint", difficulty: .hard),
         .init(id: "peacock", title: "Peacock", symbol: "bird", difficulty: .hard),
         .init(id: "elephant", title: "Elephant", symbol: "pawprint", difficulty: .hard),
         .init(id: "bear", title: "Bear", symbol: "teddybear", difficulty: .hard),
+        .init(id: "horse", title: "Horse", symbol: "pawprint", difficulty: .hard),
+        .init(id: "giraffe", title: "Giraffe", symbol: "pawprint", difficulty: .hard),
+        .init(id: "squirrel", title: "Squirrel", symbol: "leaf", difficulty: .hard),
+        .init(id: "koala", title: "Koala", symbol: "pawprint", difficulty: .hard),
+        .init(id: "crab", title: "Crab", symbol: "fish", difficulty: .hard),
         .init(id: "kaleidoscope", title: "Kaleidoscope", symbol: "sparkles", difficulty: .expert),
         .init(id: "star-garden", title: "Star garden", symbol: "star", difficulty: .expert),
         .init(id: "lace-flower", title: "Lace flower", symbol: "camera.macro", difficulty: .expert),
         .init(id: "owl-mosaic", title: "Owl mosaic", symbol: "bird", difficulty: .expert),
         .init(id: "penguin-mosaic", title: "Penguin mosaic", symbol: "bird", difficulty: .expert),
-        .init(id: "bee-mosaic", title: "Bee mosaic", symbol: "ladybug", difficulty: .expert)
+        .init(id: "bee-mosaic", title: "Bee mosaic", symbol: "ladybug", difficulty: .expert),
+        .init(id: "unicorn", title: "Unicorn", symbol: "sparkles", difficulty: .expert),
+        .init(id: "deer", title: "Deer", symbol: "pawprint", difficulty: .expert),
+        .init(id: "panda", title: "Panda", symbol: "pawprint", difficulty: .expert),
+        .init(id: "parrot", title: "Parrot", symbol: "bird", difficulty: .expert),
+        .init(id: "dinosaur", title: "Dinosaur", symbol: "lizard", difficulty: .expert)
     ]
 
     static let all: [MandalaTemplate] = originals + originals.flatMap { base in
@@ -70,6 +90,11 @@ struct MandalaTemplate: Identifiable {
         context.setLineWidth(6)
         context.setLineJoin(.round)
         context.setLineCap(.round)
+        if let animal = PatternAnimal.named(designID) {
+            animal.draw(context, style: variation, difficulty: difficulty)
+            context.restoreGState()
+            return
+        }
         if variation > 0 {
             let count: Int
             switch difficulty {
@@ -605,4 +630,593 @@ private func bee(_ context: CGContext) {
     circle(context, 330, 385, 18)
     circle(context, 300, 520, 80)
     eyes(context, left: 275, right: 330, y: 505, radius: 16)
+}
+
+// MARK: Pattern animals
+
+/// An animal whose body is filled with a mandala pattern, like a zentangle animal. Each of its six
+/// versions uses another pattern, finer on harder levels.
+struct PatternAnimal {
+    /// Parts drawn before the body (tails, fins, ears, legs).
+    let behind: (CGContext) -> Void
+    /// The area filled with the pattern.
+    let body: CGPath
+    /// Where round patterns (rosette, sun) are centered.
+    let center: CGPoint
+    /// Parts drawn over the body (heads, eyes, wings, feet).
+    let front: (CGContext) -> Void
+
+    static let ids = ["dolphin", "whale", "frog", "duck", "mouse",
+                      "dog", "pig", "sheep", "octopus", "seahorse",
+                      "horse", "giraffe", "squirrel", "koala", "crab",
+                      "unicorn", "deer", "panda", "parrot", "dinosaur"]
+
+    func draw(_ context: CGContext, style: Int, difficulty: Difficulty) {
+        if difficulty == .expert {
+            // Expert pages put the animal on a round mandala background instead of making its own
+            // pattern so fine that it turns black.
+            let page = CGRect(x: 30, y: 30, width: 940, height: 940)
+            context.saveGState()
+            context.addEllipse(in: page)
+            context.clip()
+            context.setLineWidth(4)
+            drawPattern(context, style: style.isMultiple(of: 2) ? 5 : 0, in: page,
+                        center: CGPoint(x: 500, y: 500), spacing: 80)
+            context.restoreGState()
+            context.addEllipse(in: page)
+            context.strokePath()
+        }
+        behind(context)
+        context.addPath(body)
+        context.drawPath(using: .fillStroke)
+        context.saveGState()
+        context.addPath(body)
+        context.clip()
+        context.setLineWidth(4)
+        let spacing: CGFloat
+        switch difficulty {
+        case .easy: spacing = 125
+        case .medium: spacing = 62
+        case .hard: spacing = 62
+        case .expert: spacing = 46
+        }
+        drawPattern(context, style: style, in: body.boundingBox, center: center, spacing: spacing)
+        context.restoreGState()
+        context.addPath(body)
+        context.strokePath()
+        front(context)
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
+    static func named(_ id: String) -> PatternAnimal? {
+        switch id {
+        case "dolphin":
+            return PatternAnimal(behind: { c in
+                blob(c, [(215, 555), (120, 490), (95, 520), (160, 585), (110, 655), (150, 665), (235, 590)])
+                blob(c, [(490, 352), (530, 262), (562, 232), (590, 262), (625, 338)])
+                blob(c, [(590, 478), (555, 575), (590, 588), (665, 488)])
+                for bubble in [(880, 300, 24), (925, 235, 16), (860, 215, 12)] {
+                    circle(c, CGFloat(bubble.0), CGFloat(bubble.1), CGFloat(bubble.2))
+                }
+            }, body: smooth([(890, 447), (840, 425), (785, 368), (640, 328), (480, 343), (340, 405), (240, 492),
+                             (198, 560), (228, 578), (330, 505), (470, 475), (620, 482), (760, 482), (850, 468)]),
+            center: CGPoint(x: 560, y: 420), front: { c in
+                eye(c, 785, 405, 16)
+                curve(c, (888, 455), control: (850, 472), to: (800, 460))
+            })
+        case "whale":
+            return PatternAnimal(behind: { c in
+                blob(c, [(235, 500), (140, 380), (105, 400), (165, 500), (95, 575), (130, 600), (240, 545)])
+                line(c, CGPoint(x: 640, y: 335), CGPoint(x: 640, y: 255))
+                for drop in [(600, 235, 28), (680, 235, 28), (640, 190, 30)] {
+                    circle(c, CGFloat(drop.0), CGFloat(drop.1), CGFloat(drop.2))
+                }
+            }, body: smooth([(865, 525), (835, 430), (710, 368), (530, 362), (370, 410), (265, 478), (215, 520),
+                             (265, 560), (410, 610), (610, 645), (790, 615)]),
+            center: CGPoint(x: 540, y: 500), front: { c in
+                eye(c, 770, 495, 15)
+                curve(c, (860, 548), control: (760, 595), to: (650, 565))
+                blob(c, [(560, 600), (520, 695), (575, 705), (635, 612)])
+            })
+        case "frog":
+            return PatternAnimal(behind: { c in
+                oval(c, 270, 720, 130, 80, -20)
+                oval(c, 730, 720, 130, 80, 20)
+            }, body: smooth([(500, 390), (655, 440), (725, 570), (690, 730), (500, 790), (310, 730), (275, 570), (345, 440)]),
+            center: CGPoint(x: 500, y: 610), front: { c in
+                for x: CGFloat in [385, 615] {
+                    circle(c, x, 385, 75)
+                    circle(c, x, 385, 32)
+                }
+                curve(c, (400, 520), control: (500, 578), to: (600, 520))
+                oval(c, 400, 790, 70, 35, 0)
+                oval(c, 600, 790, 70, 35, 0)
+            })
+        case "duck":
+            return PatternAnimal(behind: { c in
+                polygon(c, [CGPoint(x: 440, y: 660), CGPoint(x: 400, y: 745), CGPoint(x: 480, y: 745)])
+                polygon(c, [CGPoint(x: 570, y: 660), CGPoint(x: 530, y: 745), CGPoint(x: 610, y: 745)])
+                polygon(c, [CGPoint(x: 770, y: 470), CGPoint(x: 865, y: 395), CGPoint(x: 840, y: 505)])
+            }, body: smooth([(260, 540), (330, 460), (460, 440), (620, 460), (760, 430), (820, 470), (780, 580),
+                             (660, 665), (450, 680), (300, 630)]),
+            center: CGPoint(x: 560, y: 560), front: { c in
+                polygon(c, [CGPoint(x: 210, y: 355), CGPoint(x: 105, y: 392), CGPoint(x: 210, y: 425)])
+                circle(c, 300, 370, 110)
+                eye(c, 275, 345, 15)
+                blob(c, [(460, 500), (640, 480), (720, 545), (610, 615), (480, 600)])
+            })
+        case "mouse":
+            return PatternAnimal(behind: { c in
+                curve(c, (630, 770), control: (870, 830), to: (850, 610))
+                for x: CGFloat in [355, 645] {
+                    circle(c, x, 240, 95)
+                    circle(c, x, 240, 55)
+                }
+            }, body: smooth([(500, 430), (625, 490), (685, 650), (625, 790), (500, 820), (375, 790), (315, 650), (375, 490)]),
+            center: CGPoint(x: 500, y: 650), front: { c in
+                circle(c, 500, 345, 135)
+                eye(c, 450, 320, 18)
+                eye(c, 550, 320, 18)
+                circle(c, 500, 390, 20)
+                for (a, b) in [((470, 400), (380, 385)), ((470, 412), (385, 428)), ((530, 400), (620, 385)), ((530, 412), (615, 428))] {
+                    line(c, CGPoint(x: a.0, y: a.1), CGPoint(x: b.0, y: b.1))
+                }
+                oval(c, 430, 815, 55, 28, 0)
+                oval(c, 570, 815, 55, 28, 0)
+            })
+        case "dog":
+            return PatternAnimal(behind: { c in
+                blob(c, [(680, 780), (800, 700), (835, 615), (800, 605), (760, 690), (660, 740)])
+            }, body: smooth([(500, 470), (640, 520), (705, 690), (665, 850), (500, 875), (335, 850), (295, 690), (360, 520)]),
+            center: CGPoint(x: 500, y: 700), front: { c in
+                circle(c, 500, 330, 150)
+                let ear: [(CGFloat, CGFloat)] = [(380, 215), (290, 250), (260, 430), (320, 465), (385, 330)]
+                blob(c, ear)
+                blob(c, ear.map { (1000 - $0.0, $0.1) })
+                oval(c, 500, 390, 95, 70, 0)
+                oval(c, 500, 360, 32, 21, 0)
+                line(c, CGPoint(x: 500, y: 381), CGPoint(x: 500, y: 425))
+                eye(c, 440, 290, 20)
+                eye(c, 560, 290, 20)
+                oval(c, 420, 870, 60, 30, 0)
+                oval(c, 580, 870, 60, 30, 0)
+            })
+        case "pig":
+            return PatternAnimal(behind: { c in
+                oval(c, 380, 820, 55, 70, 0)
+                oval(c, 620, 820, 55, 70, 0)
+                polygon(c, [CGPoint(x: 370, y: 250), CGPoint(x: 330, y: 130), CGPoint(x: 455, y: 205)])
+                polygon(c, [CGPoint(x: 630, y: 250), CGPoint(x: 670, y: 130), CGPoint(x: 545, y: 205)])
+                curve(c, (740, 600), control: (840, 560), to: (790, 520))
+                curve(c, (790, 520), control: (750, 500), to: (775, 470))
+            }, body: smooth([(500, 420), (690, 470), (760, 620), (700, 780), (500, 830), (300, 780), (240, 620), (310, 470)]),
+            center: CGPoint(x: 500, y: 640), front: { c in
+                circle(c, 500, 340, 150)
+                oval(c, 500, 395, 72, 48, 0)
+                circle(c, 474, 395, 12)
+                circle(c, 526, 395, 12)
+                eye(c, 440, 300, 16)
+                eye(c, 560, 300, 16)
+            })
+        case "sheep":
+            return PatternAnimal(behind: { c in
+                for x: CGFloat in [380, 460, 620, 700] {
+                    polygon(c, [CGPoint(x: x, y: 690), CGPoint(x: x + 40, y: 690), CGPoint(x: x + 40, y: 860), CGPoint(x: x, y: 860)])
+                }
+            }, body: scallop(center: CGPoint(x: 545, y: 560), rx: 260, ry: 190, bumps: 16),
+            center: CGPoint(x: 560, y: 560), front: { c in
+                oval(c, 205, 405, 62, 30, -25)
+                oval(c, 375, 405, 62, 30, 25)
+                oval(c, 290, 480, 100, 135, 0)
+                for x: CGFloat in [255, 325] { circle(c, x, 360, 38) }
+                eye(c, 258, 470, 15)
+                eye(c, 322, 470, 15)
+                oval(c, 290, 548, 26, 16, 0)
+            })
+        case "octopus":
+            return PatternAnimal(behind: { c in
+                for k in 0..<6 {
+                    let x0 = 370 + CGFloat(k) * 52, x1 = 150 + CGFloat(k) * 140
+                    var left: [(CGFloat, CGFloat)] = [], right: [(CGFloat, CGFloat)] = []
+                    for step in 0...5 {
+                        let t = CGFloat(step) / 5
+                        let x = x0 + (x1 - x0) * t + sin(t * .pi * 2 + CGFloat(k)) * 35 * t
+                        let y = 520 + 360 * t, w = 38 - 26 * t
+                        left.append((x - w, y))
+                        right.append((x + w, y))
+                    }
+                    blob(c, left + right.reversed())
+                }
+            }, body: smooth([(500, 170), (650, 230), (710, 390), (650, 530), (500, 575), (350, 530), (290, 390), (350, 230)]),
+            center: CGPoint(x: 500, y: 330), front: { c in
+                eye(c, 430, 420, 40)
+                eye(c, 570, 420, 40)
+                curve(c, (450, 495), control: (500, 528), to: (550, 495))
+            })
+        case "seahorse":
+            return PatternAnimal(behind: { c in
+                blob(c, [(612, 420), (705, 455), (700, 560), (628, 535)])
+                polygon(c, [CGPoint(x: 480, y: 175), CGPoint(x: 500, y: 110), CGPoint(x: 525, y: 168),
+                            CGPoint(x: 545, y: 115), CGPoint(x: 560, y: 172)])
+                blob(c, [(500, 690), (565, 700), (565, 800), (610, 862), (540, 895), (468, 830), (470, 740)])
+            }, body: smooth([(470, 170), (560, 165), (605, 235), (565, 310), (615, 410), (628, 530), (580, 640), (510, 705),
+                             (455, 650), (468, 520), (470, 400), (478, 320), (440, 275), (330, 282), (325, 240), (430, 228)]),
+            center: CGPoint(x: 545, y: 470), front: { c in
+                eye(c, 510, 225, 16)
+                curve(c, (540, 830), control: (520, 790), to: (548, 780))
+            })
+        case "horse":
+            return PatternAnimal(behind: { c in
+                polygon(c, [CGPoint(x: 600, y: 215), CGPoint(x: 625, y: 95), CGPoint(x: 668, y: 228)])
+                blob(c, horseMane)
+            }, body: smooth(horseHead), center: CGPoint(x: 560, y: 560), front: { c in
+                polygon(c, [CGPoint(x: 545, y: 205), CGPoint(x: 560, y: 80), CGPoint(x: 610, y: 210)])
+                blob(c, [(560, 195), (470, 215), (430, 290), (500, 300), (585, 245)])
+                oval(c, 455, 345, 30, 18, -35)
+                circle(c, 455, 345, 8)
+                oval(c, 268, 628, 20, 12, -60)
+                curve(c, (255, 690), control: (290, 705), to: (330, 695))
+            })
+        case "unicorn":
+            // The horse facing right, with a horn, a wavier mane and flowers in it.
+            let m: ([(CGFloat, CGFloat)]) -> [(CGFloat, CGFloat)] = { $0.map { (1000 - $0.0, $0.1) } }
+            return PatternAnimal(behind: { c in
+                polygon(c, [CGPoint(x: 400, y: 215), CGPoint(x: 375, y: 95), CGPoint(x: 332, y: 228)])
+                blob(c, m([(620, 190), (720, 230), (800, 330), (850, 470), (860, 620), (900, 760), (850, 900),
+                           (790, 880), (800, 760), (740, 620), (720, 460), (680, 320)]))
+                for flower in [(230, 420), (190, 600)] {
+                    circle(c, CGFloat(flower.0), CGFloat(flower.1), 26)
+                    circle(c, CGFloat(flower.0), CGFloat(flower.1), 10)
+                }
+            }, body: smooth(m(horseHead)), center: CGPoint(x: 440, y: 560), front: { c in
+                polygon(c, [CGPoint(x: 455, y: 205), CGPoint(x: 440, y: 80), CGPoint(x: 390, y: 210)])
+                blob(c, m([(560, 195), (470, 215), (430, 290), (500, 300), (585, 245)]))
+                polygon(c, [CGPoint(x: 500, y: 215), CGPoint(x: 600, y: 40), CGPoint(x: 548, y: 238)])
+                for t: CGFloat in [0.3, 0.55, 0.78] {
+                    line(c, CGPoint(x: 500 + 100 * t, y: 215 - 175 * t), CGPoint(x: 548 + 52 * t, y: 238 - 198 * t))
+                }
+                oval(c, 545, 345, 30, 18, 35)
+                circle(c, 545, 345, 8)
+                oval(c, 732, 628, 20, 12, 60)
+                curve(c, (745, 690), control: (710, 705), to: (670, 695))
+            })
+        case "giraffe":
+            return PatternAnimal(behind: { c in
+                for (x, top) in [(CGFloat(455), CGFloat(440)), (545, 560)] {
+                    line(c, CGPoint(x: x, y: 200), CGPoint(x: top, y: 95))
+                    circle(c, top, 85, 24)
+                }
+                oval(c, 330, 228, 72, 32, -20)
+                oval(c, 670, 228, 72, 32, 20)
+            }, body: smooth([(380, 960), (410, 660), (440, 420), (560, 420), (590, 660), (620, 960)]),
+            center: CGPoint(x: 500, y: 700), front: { c in
+                blob(c, [(370, 250), (500, 185), (630, 250), (640, 340), (590, 430), (530, 520), (470, 520), (410, 430), (360, 340)])
+                oval(c, 500, 470, 75, 55, 0)
+                circle(c, 475, 470, 10)
+                circle(c, 525, 470, 10)
+                eye(c, 430, 320, 22)
+                eye(c, 570, 320, 22)
+            })
+        case "squirrel":
+            return PatternAnimal(behind: { _ in },
+                body: smooth([(560, 820), (720, 770), (830, 570), (800, 320), (660, 180), (545, 230), (600, 345), (690, 450), (650, 620), (560, 700)]),
+                center: CGPoint(x: 690, y: 480), front: { c in
+                blob(c, [(420, 520), (525, 500), (590, 620), (570, 790), (455, 840), (360, 790), (345, 640)])
+                oval(c, 445, 690, 55, 95, 0)
+                polygon(c, [CGPoint(x: 365, y: 335), CGPoint(x: 395, y: 235), CGPoint(x: 432, y: 335)])
+                circle(c, 380, 420, 105)
+                eye(c, 345, 400, 16)
+                circle(c, 278, 435, 12)
+                oval(c, 330, 560, 38, 25, -20)
+                oval(c, 430, 835, 55, 25, 0)
+                oval(c, 530, 835, 55, 25, 0)
+            })
+        case "koala":
+            return PatternAnimal(behind: { c in
+                for x: CGFloat in [295, 705] {
+                    circle(c, x, 250, 115)
+                    circle(c, x, 250, 65)
+                }
+            }, body: smooth([(500, 560), (665, 620), (715, 820), (500, 895), (285, 820), (335, 620)]),
+            center: CGPoint(x: 500, y: 760), front: { c in
+                circle(c, 500, 420, 205)
+                oval(c, 500, 468, 55, 75, 0)
+                eye(c, 420, 390, 18)
+                eye(c, 580, 390, 18)
+                oval(c, 360, 720, 50, 100, 20)
+                oval(c, 640, 720, 50, 100, -20)
+                oval(c, 400, 885, 70, 35, 0)
+                oval(c, 600, 885, 70, 35, 0)
+            })
+        case "crab":
+            return PatternAnimal(behind: { c in
+                for side: CGFloat in [-1, 1] {
+                    for k in 0..<3 {
+                        let a = CGPoint(x: 500 + side * 200, y: 560 + CGFloat(k) * 50)
+                        let b = CGPoint(x: 500 + side * 370, y: 620 + CGFloat(k) * 90)
+                        polygon(c, [CGPoint(x: a.x, y: a.y - 14), CGPoint(x: b.x, y: b.y - 9),
+                                    CGPoint(x: b.x, y: b.y + 9), CGPoint(x: a.x, y: a.y + 14)])
+                    }
+                    polygon(c, [CGPoint(x: 500 + side * 120, y: 470), CGPoint(x: 500 + side * 210, y: 350),
+                                CGPoint(x: 500 + side * 240, y: 370), CGPoint(x: 500 + side * 160, y: 490)])
+                    let claw: [(CGFloat, CGFloat)] = [(280, 250), (380, 230), (410, 330), (340, 380), (260, 340)]
+                    blob(c, side < 0 ? claw : claw.map { (1000 - $0.0, $0.1) })
+                    line(c, CGPoint(x: side < 0 ? 300 : 700, y: 300), CGPoint(x: side < 0 ? 380 : 620, y: 290))
+                }
+            }, body: smooth((0..<16).map { i -> (CGFloat, CGFloat) in
+                let angle = CGFloat(i) * .pi / 8
+                return (500 + cos(angle) * 230, 590 + sin(angle) * 145)
+            }), center: CGPoint(x: 500, y: 600), front: { c in
+                for x: CGFloat in [445, 555] {
+                    line(c, CGPoint(x: x, y: 455), CGPoint(x: x - (x < 500 ? 10 : -10), y: 400))
+                    eye(c, x - (x < 500 ? 10 : -10), 385, 24)
+                }
+                curve(c, (460, 520), control: (500, 545), to: (540, 520))
+            })
+        case "deer":
+            return PatternAnimal(behind: { c in
+                c.saveGState()
+                c.setLineWidth(14)
+                for side: CGFloat in [-1, 1] {
+                    func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: 500 + side * (500 - x), y: y) }
+                    line(c, p(440, 285), p(380, 150))
+                    line(c, p(380, 150), p(335, 85))
+                    line(c, p(405, 200), p(465, 120))
+                    line(c, p(370, 135), p(290, 140))
+                }
+                c.restoreGState()
+                oval(c, 330, 335, 80, 35, -25)
+                oval(c, 670, 335, 80, 35, 25)
+            }, body: smooth([(500, 270), (605, 305), (650, 420), (600, 590), (535, 720), (465, 720), (400, 590), (350, 420), (395, 305)]),
+            center: CGPoint(x: 500, y: 470), front: { c in
+                oval(c, 500, 690, 45, 30, 0)
+                for x: CGFloat in [430, 570] {
+                    oval(c, x, 430, 30, 18, x < 500 ? 10 : -10)
+                    circle(c, x, 430, 8)
+                }
+            })
+        case "panda":
+            return PatternAnimal(behind: { c in
+                circle(c, 330, 170, 75)
+                circle(c, 670, 170, 75)
+            }, body: smooth([(500, 500), (700, 575), (765, 775), (645, 905), (355, 905), (235, 775), (300, 575)]),
+            center: CGPoint(x: 500, y: 740), front: { c in
+                oval(c, 330, 650, 60, 120, 25)
+                oval(c, 670, 650, 60, 120, -25)
+                oval(c, 380, 900, 80, 45, 0)
+                oval(c, 620, 900, 80, 45, 0)
+                circle(c, 500, 330, 190)
+                oval(c, 425, 330, 48, 62, 30)
+                oval(c, 575, 330, 48, 62, -30)
+                circle(c, 430, 325, 16)
+                circle(c, 570, 325, 16)
+                oval(c, 500, 400, 28, 18, 0)
+                curve(c, (470, 440), control: (500, 460), to: (530, 440))
+            })
+        case "parrot":
+            return PatternAnimal(behind: { c in
+                polygon(c, [CGPoint(x: 150, y: 820), CGPoint(x: 850, y: 820), CGPoint(x: 850, y: 860), CGPoint(x: 150, y: 860)])
+                polygon(c, [CGPoint(x: 470, y: 780), CGPoint(x: 560, y: 780), CGPoint(x: 600, y: 955), CGPoint(x: 500, y: 955)])
+                line(c, CGPoint(x: 515, y: 790), CGPoint(x: 550, y: 950))
+            }, body: smooth([(430, 240), (545, 255), (605, 380), (625, 560), (585, 705), (525, 810), (470, 815), (452, 700), (420, 560), (400, 400)]),
+            center: CGPoint(x: 520, y: 520), front: { c in
+                blob(c, [(408, 262), (320, 285), (318, 350), (360, 362), (410, 330)])
+                eye(c, 470, 300, 22)
+                blob(c, [(525, 400), (615, 455), (610, 650), (530, 720), (490, 560)])
+                oval(c, 470, 825, 30, 18, 0)
+                oval(c, 540, 825, 30, 18, 0)
+            })
+        case "dinosaur":
+            return PatternAnimal(behind: { c in
+                for leg in [(330, 640), (450, 650), (600, 640), (690, 620)] {
+                    let x = CGFloat(leg.0), y = CGFloat(leg.1)
+                    polygon(c, [CGPoint(x: x, y: y), CGPoint(x: x + 65, y: y), CGPoint(x: x + 60, y: 805), CGPoint(x: x + 5, y: 805)])
+                }
+            }, body: smooth([(80, 665), (250, 565), (400, 475), (560, 452), (680, 470), (728, 405), (755, 265), (828, 215),
+                             (885, 245), (862, 302), (800, 312), (775, 455), (762, 622), (622, 692), (420, 695), (250, 655)]),
+            center: CGPoint(x: 450, y: 580), front: { c in
+                eye(c, 838, 250, 13)
+                curve(c, (880, 275), control: (860, 290), to: (835, 285))
+            })
+        default:
+            return nil
+        }
+    }
+
+    /// A horse's head and neck in profile, facing left: forehead, nose, muzzle, jaw, throat, neck.
+    private static let horseHead: [(CGFloat, CGFloat)] = [
+        (560, 200), (450, 250), (360, 380), (275, 545), (238, 640), (262, 705), (345, 715), (430, 650),
+        (520, 590), (560, 660), (600, 800), (630, 920), (830, 920), (780, 720), (740, 470), (660, 250)
+    ]
+    private static let horseMane: [(CGFloat, CGFloat)] = [
+        (620, 190), (720, 230), (800, 330), (850, 470), (860, 620), (900, 760), (850, 900),
+        (790, 880), (800, 760), (740, 620), (720, 460), (680, 320)
+    ]
+}
+
+/// A smooth closed shape through the given points (Catmull-Rom curves).
+private func smooth(_ values: [(CGFloat, CGFloat)]) -> CGPath {
+    let points = values.map { CGPoint(x: $0.0, y: $0.1) }
+    let path = CGMutablePath()
+    let n = points.count
+    path.move(to: points[0])
+    for i in 0..<n {
+        let p0 = points[(i - 1 + n) % n], p1 = points[i], p2 = points[(i + 1) % n], p3 = points[(i + 2) % n]
+        path.addCurve(to: p2,
+                      control1: CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6),
+                      control2: CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6))
+    }
+    path.closeSubpath()
+    return path
+}
+
+private func blob(_ context: CGContext, _ values: [(CGFloat, CGFloat)]) {
+    context.addPath(smooth(values))
+    context.drawPath(using: .fillStroke)
+}
+
+/// A fluffy outline with rounded bumps, for wool.
+private func scallop(center: CGPoint, rx: CGFloat, ry: CGFloat, bumps: Int) -> CGPath {
+    let path = CGMutablePath()
+    func point(_ angle: CGFloat, _ scale: CGFloat) -> CGPoint {
+        CGPoint(x: center.x + cos(angle) * rx * scale, y: center.y + sin(angle) * ry * scale)
+    }
+    path.move(to: point(0, 1))
+    for i in 0..<bumps {
+        let a = CGFloat(i) * 2 * .pi / CGFloat(bumps), b = CGFloat(i + 1) * 2 * .pi / CGFloat(bumps)
+        path.addQuadCurve(to: point(b, 1), control: point((a + b) / 2, 1.22))
+    }
+    path.closeSubpath()
+    return path
+}
+
+private func oval(_ context: CGContext, _ x: CGFloat, _ y: CGFloat, _ rx: CGFloat, _ ry: CGFloat, _ degrees: CGFloat) {
+    context.saveGState()
+    context.translateBy(x: x, y: y)
+    context.rotate(by: degrees * .pi / 180)
+    context.addEllipse(in: CGRect(x: -rx, y: -ry, width: rx * 2, height: ry * 2))
+    context.drawPath(using: .fillStroke)
+    context.restoreGState()
+}
+
+private func eye(_ context: CGContext, _ x: CGFloat, _ y: CGFloat, _ radius: CGFloat) {
+    circle(context, x, y, radius)
+    circle(context, x, y, radius * 0.45)
+}
+
+private func curve(_ context: CGContext, _ from: (CGFloat, CGFloat), control: (CGFloat, CGFloat), to: (CGFloat, CGFloat)) {
+    context.move(to: CGPoint(x: from.0, y: from.1))
+    context.addQuadCurve(to: CGPoint(x: to.0, y: to.1), control: CGPoint(x: control.0, y: control.1))
+    context.strokePath()
+}
+
+private func ringStroke(_ context: CGContext, _ center: CGPoint, _ radius: CGFloat) {
+    context.addEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
+    context.strokePath()
+}
+
+/// The mandala patterns inside a pattern animal's body; only lines, so the body stays white to color.
+private func drawPattern(_ c: CGContext, style: Int, in box: CGRect, center: CGPoint, spacing s: CGFloat) {
+    let reach = [CGPoint(x: box.minX, y: box.minY), CGPoint(x: box.maxX, y: box.minY),
+                 CGPoint(x: box.minX, y: box.maxY), CGPoint(x: box.maxX, y: box.maxY)]
+        .map { hypot($0.x - center.x, $0.y - center.y) }.max() ?? 0
+    switch style % 6 {
+    case 0:
+        // Rosette: rings split into cells, each ring's cells offset like bricks, with a flower in the middle.
+        let step = s * 0.75
+        var r = step
+        ringStroke(c, center, r)
+        for i in 0..<6 {
+            let angle = CGFloat(i) * .pi / 3
+            ringStroke(c, CGPoint(x: center.x + cos(angle) * r * 0.5, y: center.y + sin(angle) * r * 0.5), r * 0.5)
+        }
+        var ring = 0
+        while r < reach {
+            let next = r + step
+            ringStroke(c, center, next)
+            let cells = max(6, Int(2 * .pi * (r + next) / 2 / s))
+            for i in 0..<cells {
+                let angle = (CGFloat(i) + (ring.isMultiple(of: 2) ? 0 : 0.5)) * 2 * .pi / CGFloat(cells)
+                line(c, CGPoint(x: center.x + cos(angle) * r, y: center.y + sin(angle) * r),
+                     CGPoint(x: center.x + cos(angle) * next, y: center.y + sin(angle) * next))
+            }
+            r = next
+            ring += 1
+        }
+    case 1:
+        // Scales: overlapping circles in offset rows.
+        var row = 0
+        var y = box.minY - s
+        while y < box.maxY + s {
+            var x = box.minX - s + (row.isMultiple(of: 2) ? 0 : s / 2)
+            while x < box.maxX + s {
+                ringStroke(c, CGPoint(x: x, y: y), s * 0.62)
+                x += s
+            }
+            y += s * 0.85
+            row += 1
+        }
+    case 2:
+        // Waves crossed by straight lines, with a dot in every cell.
+        let gap = s * 0.6
+        var y = box.minY - gap
+        var row = 0
+        while y < box.maxY + gap {
+            c.move(to: CGPoint(x: box.minX - s, y: y))
+            var x = box.minX - s
+            while x <= box.maxX + s {
+                c.addLine(to: CGPoint(x: x, y: y + sin(x / s * 2 * .pi) * gap * 0.3))
+                x += s / 8
+            }
+            c.strokePath()
+            var dotX = box.minX + (row.isMultiple(of: 2) ? s / 2 : 0)
+            while dotX < box.maxX {
+                ringStroke(c, CGPoint(x: dotX + s / 2, y: y + gap / 2 + sin((dotX + s / 2) / s * 2 * .pi) * gap * 0.3), gap * 0.18)
+                dotX += s
+            }
+            y += gap
+            row += 1
+        }
+        var x = box.minX
+        while x < box.maxX {
+            line(c, CGPoint(x: x, y: box.minY), CGPoint(x: x, y: box.maxY))
+            x += s
+        }
+    case 3:
+        // Little flowers: a center with six round petals, in offset rows.
+        var row = 0
+        var y = box.minY
+        while y < box.maxY + s {
+            var x = box.minX + (row.isMultiple(of: 2) ? 0 : s / 2)
+            while x < box.maxX + s {
+                for i in 0..<6 {
+                    let angle = CGFloat(i) * .pi / 3
+                    ringStroke(c, CGPoint(x: x + cos(angle) * s * 0.27, y: y + sin(angle) * s * 0.27), s * 0.17)
+                }
+                ringStroke(c, CGPoint(x: x, y: y), s * 0.12)
+                x += s
+            }
+            y += s * 0.87
+            row += 1
+        }
+    case 4:
+        // Zigzag bands with straight dividers.
+        let gap = s * 0.55
+        var y = box.minY
+        while y < box.maxY + gap {
+            c.move(to: CGPoint(x: box.minX - s, y: y))
+            var x = box.minX - s
+            var up = true
+            while x <= box.maxX + s {
+                x += s / 4
+                c.addLine(to: CGPoint(x: x, y: y + (up ? -gap * 0.3 : gap * 0.3)))
+                up.toggle()
+            }
+            c.strokePath()
+            y += gap
+        }
+        var x = box.minX + s / 2
+        while x < box.maxX {
+            line(c, CGPoint(x: x, y: box.minY), CGPoint(x: x, y: box.maxY))
+            x += s * 1.25
+        }
+    default:
+        // Sun: rings joined by zigzag rays.
+        let step = s * 0.8
+        var r = step * 0.7
+        ringStroke(c, center, r)
+        while r < reach {
+            let next = r + step
+            ringStroke(c, center, next)
+            let teeth = max(8, Int(2 * .pi * next / s))
+            c.move(to: CGPoint(x: center.x + r, y: center.y))
+            for i in 1...(teeth * 2) {
+                let angle = CGFloat(i) * .pi / CGFloat(teeth)
+                let radius = i.isMultiple(of: 2) ? r : next
+                c.addLine(to: CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius))
+            }
+            c.strokePath()
+            r = next
+        }
+    }
 }
