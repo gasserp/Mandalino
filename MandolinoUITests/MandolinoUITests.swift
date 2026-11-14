@@ -7,14 +7,15 @@ final class MandolinoUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["template-flower"].waitForExistence(timeout: 20))
         screenshot("Gallery")
-        app.segmentedControls["difficulty"].buttons["Medium"].tap()
+        app.buttons["difficulty-medium"].tap()
         XCTAssertTrue(app.buttons["template-owl"].waitForExistence(timeout: 5))
-        app.segmentedControls["difficulty"].buttons["Hard"].tap()
+        XCTAssertTrue(app.buttons["template-owl-5"].exists, "Each design shows all its versions together")
+        app.buttons["difficulty-hard"].tap()
         XCTAssertTrue(app.buttons["template-lion"].waitForExistence(timeout: 5))
-        app.segmentedControls["difficulty"].buttons["Expert"].tap()
+        app.buttons["difficulty-expert"].tap()
         XCTAssertTrue(app.buttons["template-kaleidoscope"].waitForExistence(timeout: 5))
         screenshot("Expert collection")
-        app.segmentedControls["difficulty"].buttons["Easy"].tap()
+        app.buttons["difficulty-easy"].tap()
         app.buttons["template-flower"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["drawing-canvas"].waitForExistence(timeout: 10))
         pickColor(10, in: app)
@@ -74,7 +75,7 @@ final class MandolinoUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         app.launch()
         XCTAssertTrue(app.buttons["template-flower"].waitForExistence(timeout: 10))
-        app.segmentedControls["difficulty"].buttons["Hard"].tap()
+        app.buttons["difficulty-hard"].tap()
         app.buttons["template-lion"].tap()
         let canvas = app.descendants(matching: .any)["drawing-canvas"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
@@ -95,7 +96,7 @@ final class MandolinoUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-UITestEnglish"]
         app.launch()
-        app.segmentedControls["difficulty"].buttons["Expert"].tap()
+        app.buttons["difficulty-expert"].tap()
         app.buttons["template-kaleidoscope"].tap()
         let canvas = app.descendants(matching: .any)["drawing-canvas"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
@@ -148,6 +149,7 @@ final class MandolinoUITests: XCTestCase {
         app.launchArguments = []
         app.launch()
         XCTAssertTrue(app.staticTexts["Pick a coloring page"].waitForExistence(timeout: 10))
+        app.buttons["gallery-settings"].tap()
         app.segmentedControls["language-switcher"].buttons["Deutsch"].tap()
         XCTAssertTrue(app.staticTexts["Wähle ein Ausmalbild"].waitForExistence(timeout: 5))
         screenshot("German gallery")
@@ -160,7 +162,8 @@ final class MandolinoUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         app.launch()
         XCTAssertTrue(app.buttons["template-flower"].waitForExistence(timeout: 20))
-        let preview = app.descendants(matching: .any)["preview-flower"]
+        // The gallery card is the preview itself.
+        let preview = app.buttons["template-flower"]
         XCTAssertTrue(preview.waitForExistence(timeout: 10))
         let before = preview.screenshot().pngRepresentation
         app.buttons["template-flower"].tap()

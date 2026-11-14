@@ -4,7 +4,7 @@ enum L {
     static func text(_ english: String) -> String { isGerman ? (german[english] ?? english) : english }
     private static let german: [String: String] = [
         "Easy" : "Einfach",
-        "Difficulty" : "Schwierigkeitsgrad",
+        "Settings" : "Einstellungen",
         "Medium" : "Mittel",
         "Hard" : "Schwierig",
         "Expert" : "Profi",
