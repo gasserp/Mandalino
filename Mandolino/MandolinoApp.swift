@@ -30,7 +30,8 @@ struct GalleryView: View {
     @AppStorage("appLanguage") private var language = "de"
     @State private var difficulty: Difficulty = .easy
     @State private var selectedPage: Page?
-    @State private var previewRevision = UUID()
+    @State private var openedPageID: String?
+    @State private var previewRevisions: [String: Int] = [:]
 
     struct Page: Identifiable {
         let template: MandalaTemplate?
@@ -65,9 +66,9 @@ struct GalleryView: View {
                             .background(Theme.peach.opacity(0.4), in: Circle())
                     }
 
-                    Button { selectedPage = Page(template: nil) } label: {
+                    Button { open(nil) } label: {
                         HStack(spacing: 20) {
-                            ArtworkPreview(template: nil, revision: previewRevision)
+                            ArtworkPreview(template: nil, revision: previewRevisions["free-draw", default: 0])
                                 .frame(width: 96, height: 96)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             VStack(alignment: .leading, spacing: 6) {
@@ -105,8 +106,9 @@ struct GalleryView: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 20),
                                              count: geometry.size.width > 1000 ? 4 : 2), spacing: 20) {
                         ForEach(MandalaTemplate.all.filter { $0.difficulty == difficulty }) { template in
-                            Button { selectedPage = Page(template: template) } label: {
-                                TemplateCard(template: template, previewRevision: previewRevision)
+                            Button { open(template) } label: {
+                                TemplateCard(template: template,
+                                             previewRevision: previewRevisions[template.id, default: 0])
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("\(template.localizedTitle), \(template.difficulty.title)")
@@ -128,15 +130,24 @@ struct GalleryView: View {
             }
             .background(Theme.cream)
         }
-        .fullScreenCover(item: $selectedPage, onDismiss: { previewRevision = UUID() }) { page in
+        .fullScreenCover(item: $selectedPage, onDismiss: {
+            // Only the page that was just colored needs a new preview.
+            if let openedPageID { previewRevisions[openedPageID, default: 0] += 1 }
+        }) { page in
             ColoringView(template: page.template)
         }
+    }
+
+    private func open(_ template: MandalaTemplate?) {
+        let page = Page(template: template)
+        openedPageID = page.id
+        selectedPage = page
     }
 }
 
 struct TemplateCard: View {
     let template: MandalaTemplate
-    let previewRevision: UUID
+    let previewRevision: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -169,7 +180,7 @@ struct TemplateCard: View {
 
 struct ArtworkPreview: View {
     let template: MandalaTemplate?
-    let revision: UUID
+    let revision: Int
     @State private var preview: UIImage?
     @State private var errorMessage: String?
 
@@ -190,7 +201,7 @@ struct ArtworkPreview: View {
         .accessibilityIdentifier("preview-\(template?.id ?? "free-draw")")
         .task(id: revision) {
             do {
-                preview = try await PreviewRenderer.shared.image(for: template)
+                preview = try await PreviewRenderer.shared.image(for: template, revision: revision)
                 errorMessage = nil
             } catch is CancellationError {
                 return
@@ -204,9 +215,21 @@ struct ArtworkPreview: View {
 
 private actor PreviewRenderer {
     static let shared = PreviewRenderer()
+    private let cache = NSCache<NSString, UIImage>()
 
-    func image(for template: MandalaTemplate?) throws -> UIImage {
+    func image(for template: MandalaTemplate?, revision: Int) throws -> UIImage {
+        let id = template?.id ?? "free-draw"
+        let key = "\(id)#\(revision)" as NSString
+        if let cached = cache.object(forKey: key) { return cached }
         try Task.checkCancellation()
-        return try CanvasEngine.preview(template: template)
+        let image: UIImage
+        if let url = try? CanvasEngine.thumbnailURL(for: id), let saved = UIImage(contentsOfFile: url.path) {
+            image = saved
+        } else {
+            // Untouched pages and drawings saved before thumbnails existed.
+            image = try CanvasEngine.preview(template: template)
+        }
+        cache.setObject(image, forKey: key)
+        return image
     }
 }

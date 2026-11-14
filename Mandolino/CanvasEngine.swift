@@ -202,7 +202,10 @@ final class CanvasEngine: ObservableObject {
     let size: Int
     let documentID: String
     let template: MandalaTemplate?
-    @Published private(set) var image: UIImage = UIImage()
+    // Not @Published: strokes replace it every frame, and re-rendering the whole editor each time
+    // made the brush lag. The canvas view receives it through onRender instead.
+    private(set) var image: UIImage = UIImage()
+    var onRender: (() -> Void)?
     @Published private(set) var undoCount = 0
     @Published private(set) var redoCount = 0
     @Published var errorMessage: String?
@@ -232,9 +235,17 @@ final class CanvasEngine: ObservableObject {
         renderOriginal()
         if restore {
             do {
-                let url = try documentURL()
+                let url = try Self.fileURL(documentID, "mandolino")
+                let legacyURL = try Self.fileURL(documentID, "json")
+                let saved: CanvasSnapshot?
                 if FileManager.default.fileExists(atPath: url.path) {
-                    let saved = try JSONDecoder().decode(CanvasSnapshot.self, from: Data(contentsOf: url))
+                    saved = try Self.decode(Data(contentsOf: url))
+                } else if FileManager.default.fileExists(atPath: legacyURL.path) {
+                    saved = try JSONDecoder().decode(CanvasSnapshot.self, from: Data(contentsOf: legacyURL))
+                } else {
+                    saved = nil
+                }
+                if let saved {
                     guard saved.size == size, saved.lines.count == size * size,
                           saved.paint.count == size * size * 4,
                           saved.glitter == nil || saved.glitter?.count == size * size else {
@@ -508,7 +519,8 @@ final class CanvasEngine: ObservableObject {
     }
 
     func renderStroke() {
-        refresh()
+        // Sparkles are rebuilt once the stroke ends instead of on every frame.
+        refresh(sparkles: false)
     }
 
     func erase(at point: CGPoint, width: CGFloat) {
@@ -571,44 +583,61 @@ final class CanvasEngine: ObservableObject {
 
     private func saveInBackground() {
         guard dirty else { return }
-        do {
-            let url = try documentURL()
-            let state = snapshot, savingRevision = revision
-            saveQueue.async { [weak self] in
-                let result = Result { try JSONEncoder().encode(state).write(to: url, options: .atomic) }
-                Task { @MainActor [weak self] in
-                    guard let self, self.revision == savingRevision, self.dirty else { return }
-                    switch result {
-                    case .success: self.dirty = false
-                    case .failure(let error):
-                        self.errorMessage = "\(L.text("Your drawing could not be saved:")) \(error.localizedDescription)"
-                    }
+        let state = snapshot, image = image, documentID = documentID, savingRevision = revision
+        saveQueue.async { [weak self] in
+            let result = Result { try Self.write(state, image: image, documentID: documentID) }
+            Task { @MainActor [weak self] in
+                guard let self, self.revision == savingRevision, self.dirty else { return }
+                switch result {
+                case .success: self.dirty = false
+                case .failure(let error):
+                    self.errorMessage = "\(L.text("Your drawing could not be saved:")) \(error.localizedDescription)"
                 }
             }
-        } catch {
-            errorMessage = "\(L.text("Your drawing could not be saved:")) \(error.localizedDescription)"
         }
     }
 
     func save() {
         guard dirty else { return }
         do {
-            let state = snapshot, url = try documentURL()
-            try saveQueue.sync {
-                try JSONEncoder().encode(state).write(to: url, options: .atomic)
-            }
+            let state = snapshot, image = image
+            try saveQueue.sync { try Self.write(state, image: image, documentID: documentID) }
             dirty = false
         } catch {
             errorMessage = "\(L.text("Your drawing could not be saved:")) \(error.localizedDescription)"
         }
     }
 
-    private func documentURL() throws -> URL {
+    // A binary plist keeps the pixel buffers as raw bytes (JSON stored them as escaped base64,
+    // about 14 MB a page), and LZFSE shrinks the mostly white buffers to a small file.
+    private static func write(_ state: CanvasSnapshot, image: UIImage, documentID: String) throws {
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        let data = try (encoder.encode(state) as NSData).compressed(using: .lzfse) as Data
+        // The gallery shows this thumbnail, or rebuilds the preview from the drawing when it is missing.
+        // Removing it first means an app stopped mid-save never leaves an outdated thumbnail behind.
+        let thumbnailURL = try fileURL(documentID, "png")
+        try? FileManager.default.removeItem(at: thumbnailURL)
+        try data.write(to: fileURL(documentID, "mandolino"), options: .atomic)
+        try? FileManager.default.removeItem(at: fileURL(documentID, "json"))
+        try? thumbnail(of: image).pngData()?.write(to: thumbnailURL, options: .atomic)
+    }
+
+    private static func decode(_ data: Data) throws -> CanvasSnapshot {
+        try PropertyListDecoder().decode(CanvasSnapshot.self,
+                                         from: (data as NSData).decompressed(using: .lzfse) as Data)
+    }
+
+    private static func fileURL(_ documentID: String, _ pathExtension: String) throws -> URL {
         let folder = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask,
                                                 appropriateFor: nil, create: true)
             .appendingPathComponent("Drawings", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder.appendingPathComponent(documentID).appendingPathExtension("json")
+        return folder.appendingPathComponent(documentID).appendingPathExtension(pathExtension)
+    }
+
+    static func thumbnailURL(for documentID: String) throws -> URL {
+        try fileURL(documentID, "png")
     }
 
     static func preview(template: MandalaTemplate?, side: CGFloat = 300) throws -> UIImage {
@@ -616,32 +645,38 @@ final class CanvasEngine: ObservableObject {
         if let error = engine.errorMessage {
             throw NSError(domain: "CanvasPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: error])
         }
+        return thumbnail(of: engine.image, side: side)
+    }
+
+    private static func thumbnail(of image: UIImage, side: CGFloat = 300) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
         return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
-            engine.image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+            image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
         }
     }
 
-    private func refresh() {
-        var candidates: [CGPoint] = []
-        for y in stride(from: 12, to: size, by: max(8, size / 30)) {
-            for x in stride(from: 12, to: size, by: max(8, size / 30)) {
-                let jitter = Int(Self.noise(x: x, y: y) % 13) - 6
-                let px = min(max(x + jitter, 0), size - 1)
-                let py = min(max(y - jitter, 0), size - 1)
-                let index = py * size + px
-                if glitterMask[index] != 0 && lines[index] >= 240 {
-                    candidates.append(CGPoint(x: CGFloat(px) / CGFloat(size), y: CGFloat(py) / CGFloat(size)))
+    private func refresh(sparkles: Bool = true) {
+        if sparkles {
+            var candidates: [CGPoint] = []
+            for y in stride(from: 12, to: size, by: max(8, size / 30)) {
+                for x in stride(from: 12, to: size, by: max(8, size / 30)) {
+                    let jitter = Int(Self.noise(x: x, y: y) % 13) - 6
+                    let px = min(max(x + jitter, 0), size - 1)
+                    let py = min(max(y - jitter, 0), size - 1)
+                    let index = py * size + px
+                    if glitterMask[index] != 0 && lines[index] >= 240 {
+                        candidates.append(CGPoint(x: CGFloat(px) / CGFloat(size), y: CGFloat(py) / CGFloat(size)))
+                    }
                 }
             }
-        }
-        if candidates.count > 140 {
-            let step = Double(candidates.count) / 140
-            sparklePoints = (0..<140).map { candidates[Int(Double($0) * step)] }
-        } else {
-            sparklePoints = candidates
+            if candidates.count > 140 {
+                let step = Double(candidates.count) / 140
+                sparklePoints = (0..<140).map { candidates[Int(Double($0) * step)] }
+            } else {
+                sparklePoints = candidates
+            }
         }
         var composite = paint
         if outlineImage == nil {
@@ -668,7 +703,9 @@ final class CanvasEngine: ObservableObject {
             guard let result = context.makeImage() else { preconditionFailure("Cannot render drawing") }
             image = UIImage(cgImage: result)
         }
-        undoCount = undoStack.count
-        redoCount = redoStack.count
+        // Assigning a @Published value re-renders the editor even when it is unchanged.
+        if undoCount != undoStack.count { undoCount = undoStack.count }
+        if redoCount != redoStack.count { redoCount = redoStack.count }
+        onRender?()
     }
 }

@@ -362,7 +362,7 @@ struct ColoringView: View {
 }
 
 struct DrawingSurface: UIViewRepresentable {
-    @ObservedObject var engine: CanvasEngine
+    let engine: CanvasEngine
     let tool: DrawingTool
     let color: PaintColor
     let glitterStyle: GlitterStyle
@@ -383,11 +383,6 @@ struct DrawingSurface: UIViewRepresentable {
         view.lineWidth = lineWidth
         view.accessibilityLabel = L.text("Drawing canvas")
         view.accessibilityHint = L.text("Pinch to zoom. Move around with two fingers.")
-        if view.image !== engine.image {
-            view.image = engine.image
-            view.setNeedsDisplay()
-        }
-        view.updateSparkles(engine.sparklePoints)
     }
 }
 
@@ -451,8 +446,13 @@ final class ZoomCanvas: UIScrollView, UIScrollViewDelegate {
 }
 
 final class TouchCanvas: UIView {
-    var engine: CanvasEngine?
-    var image: UIImage?
+    var engine: CanvasEngine? {
+        didSet {
+            guard engine !== oldValue else { return }
+            engine?.onRender = { [weak self] in self?.showEngineImage() }
+            showEngineImage()
+        }
+    }
     var tool: DrawingTool = .fill
     var color = PaintColor.palette[0]
     var glitterStyle: GlitterStyle = .none
@@ -524,8 +524,11 @@ final class TouchCanvas: UIView {
         }
     }
 
-    override func draw(_ rect: CGRect) {
-        image?.draw(in: bounds)
+    // Handing the bitmap to the layer lets the GPU scale it, instead of redrawing it on the CPU every frame.
+    private func showEngineImage() {
+        guard let engine else { return }
+        layer.contents = engine.image.cgImage
+        updateSparkles(engine.sparklePoints)
     }
 
     private func normalized(_ touch: UITouch) -> CGPoint {

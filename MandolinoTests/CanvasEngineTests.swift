@@ -214,15 +214,8 @@ final class CanvasEngineTests: XCTestCase {
     }
 
     func testSavedDrawingRestoresEditableLinesAndColors() throws {
-        let folder = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask,
-                                                appropriateFor: nil, create: true)
-            .appendingPathComponent("Drawings")
-        let url = folder.appendingPathComponent("free-draw.json")
-        let previous = FileManager.default.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
-        defer {
-            if let previous { try? previous.write(to: url, options: .atomic) }
-            else { try? FileManager.default.removeItem(at: url) }
-        }
+        let restore = try preserveSavedFiles(of: "free-draw")
+        defer { restore() }
         let original = CanvasEngine(template: nil, restore: false)
         box(original)
         original.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitter: true)
@@ -235,6 +228,46 @@ final class CanvasEngineTests: XCTestCase {
         XCTAssertEqual(restored.glitterMask, original.glitterMask)
         restored.fill(at: CGPoint(x: 0.5, y: 0.5), color: blue, glitter: false)
         XCTAssertEqual(pixel(restored, 0.5, 0.5), [blue.red, blue.green, blue.blue])
+    }
+
+    func testSavedDrawingIsCompactAndWritesGalleryThumbnail() throws {
+        let template = MandalaTemplate.all[0]
+        let restore = try preserveSavedFiles(of: template.id)
+        defer { restore() }
+        let engine = CanvasEngine(template: template, restore: false)
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none)
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.1, y: 0.15), to: CGPoint(x: 0.9, y: 0.15),
+                    tool: .brush, width: 36, color: blue, glitterStyle: .diamond)
+        engine.endStroke()
+        engine.save()
+        XCTAssertNil(engine.errorMessage)
+        let saved = try Data(contentsOf: savedFileURL(template.id, "mandolino"))
+        print("SAVE_SIZE bytes=\(saved.count)")
+        XCTAssertLessThan(saved.count, 500_000, "The old JSON format needed about 14 MB a page")
+        let thumbnail = try XCTUnwrap(UIImage(contentsOfFile: CanvasEngine.thumbnailURL(for: template.id).path))
+        XCTAssertEqual(thumbnail.size, CGSize(width: 300, height: 300))
+    }
+
+    func testLegacyJSONDrawingLoadsAndIsReplacedOnNextSave() throws {
+        let restore = try preserveSavedFiles(of: "free-draw")
+        defer { restore() }
+        let original = CanvasEngine(template: nil, restore: false)
+        box(original)
+        original.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitter: true)
+        let legacy = CanvasSnapshot(size: original.size, lines: Data(original.lines),
+                                    paint: Data(original.paint), glitter: Data(original.glitterMask))
+        try? FileManager.default.removeItem(at: savedFileURL("free-draw", "mandolino"))
+        try JSONEncoder().encode(legacy).write(to: savedFileURL("free-draw", "json"))
+        let restored = CanvasEngine(template: nil)
+        XCTAssertNil(restored.errorMessage)
+        XCTAssertEqual(restored.lines, original.lines)
+        XCTAssertEqual(restored.paint, original.paint)
+        XCTAssertEqual(restored.glitterMask, original.glitterMask)
+        restored.fill(at: CGPoint(x: 0.5, y: 0.5), color: blue, glitter: false)
+        restored.save()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try savedFileURL("free-draw", "json").path))
+        XCTAssertEqual(CanvasEngine(template: nil).paint, restored.paint)
     }
 
     func testCatalogHasLargeDistinctCollectionsAndEnclosedColorableRegions() {
@@ -364,15 +397,8 @@ final class CanvasEngineTests: XCTestCase {
     }
 
     private func verifySavedPreview(template: MandalaTemplate?) throws {
-        let folder = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask,
-                                                appropriateFor: nil, create: true)
-            .appendingPathComponent("Drawings")
-        let url = folder.appendingPathComponent("\(template?.id ?? "free-draw").json")
-        let previous = FileManager.default.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
-        defer {
-            if let previous { try? previous.write(to: url, options: .atomic) }
-            else { try? FileManager.default.removeItem(at: url) }
-        }
+        let restore = try preserveSavedFiles(of: template?.id ?? "free-draw")
+        defer { restore() }
         let engine = CanvasEngine(template: template, restore: false)
         engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: blue, glitterStyle: .none,
                     options: PaintOptions(effect: .gradient, secondColor: red, direction: .vertical))
@@ -401,6 +427,26 @@ final class CanvasEngineTests: XCTestCase {
         let second = try CanvasEngine.preview(template: template)
         XCTAssertNotEqual(try renderedBytes(first), try renderedBytes(second))
         XCTAssertEqual(try renderedBytes(second), try renderedBytes(resized(engine.image)))
+    }
+
+    private func savedFileURL(_ id: String, _ pathExtension: String) throws -> URL {
+        let folder = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask,
+                                                appropriateFor: nil, create: true)
+            .appendingPathComponent("Drawings", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent(id).appendingPathExtension(pathExtension)
+    }
+
+    /// Snapshots a page's saved files; the returned closure puts them back exactly as they were.
+    private func preserveSavedFiles(of id: String) throws -> () -> Void {
+        let urls = try ["mandolino", "json", "png"].map { try savedFileURL(id, $0) }
+        let previous = urls.map { try? Data(contentsOf: $0) }
+        return {
+            for (url, data) in zip(urls, previous) {
+                if let data { try? data.write(to: url, options: .atomic) }
+                else { try? FileManager.default.removeItem(at: url) }
+            }
+        }
     }
 
     private func resized(_ image: UIImage) -> UIImage {
