@@ -36,6 +36,7 @@ struct GalleryView: View {
     @State private var previewRevisions: [String: Int] = [:]
     @State private var showingSettings = false
     @State private var ownDrawings: [String] = []
+    @AppStorage("finishedPages") private var finishedPagesRaw = ""
 
     struct Page: Identifiable {
         let template: MandalaTemplate?
@@ -90,7 +91,9 @@ struct GalleryView: View {
                             ForEach(MandalaTemplate.all.filter { $0.designID == design.designID }) { template in
                                 Button { open(template) } label: {
                                     TemplateCard(template: template,
-                                                 previewRevision: previewRevisions[template.id, default: 0])
+                                                 previewRevision: previewRevisions[template.id, default: 0],
+                                                 finished: finishedPagesRaw.split(separator: ",")
+                                                     .contains { $0 == template.id })
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityLabel("\(template.localizedTitle), \(template.difficulty.title)")
@@ -224,6 +227,7 @@ struct GalleryView: View {
 struct TemplateCard: View {
     let template: MandalaTemplate
     let previewRevision: Int
+    var finished = false
 
     var body: some View {
         ArtworkPreview(template: template, revision: previewRevision)
@@ -233,6 +237,18 @@ struct TemplateCard: View {
             .padding(6)
             .background(.white, in: RoundedRectangle(cornerRadius: 18))
             .overlay { RoundedRectangle(cornerRadius: 18).stroke(Theme.ink.opacity(0.06)) }
+            .overlay(alignment: .topTrailing) {
+                if finished {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(Color.orange, in: Circle())
+                        .overlay { Circle().stroke(.white, lineWidth: 2) }
+                        .offset(x: 6, y: -6)
+                        .accessibilityLabel(L.text("Finished"))
+                }
+            }
     }
 }
 

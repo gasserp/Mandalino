@@ -331,6 +331,24 @@ final class CanvasEngineTests: XCTestCase {
         XCTAssertEqual(pixel(engine, 0.35, 0.8), [255, 255, 255])
     }
 
+    func testProgressCountsColoredSpacesUntilThePageIsFinished() {
+        let engine = CanvasEngine(template: MandalaTemplate.all[0], size: 300, restore: false)
+        let map = SpaceMap(lines: engine.lines, size: 300)
+        XCTAssertGreaterThanOrEqual(map.sizes.count, 6)
+        XCTAssertEqual(map.progress(paint: engine.paint), PageProgress(done: 0, total: map.sizes.count))
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none)
+        XCTAssertEqual(map.progress(paint: engine.paint).done, 1)
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: PaintColor.palette[19], glitterStyle: .none)
+        XCTAssertEqual(map.progress(paint: engine.paint).done, 0, "White paint, like erasing, is not coloring")
+        for space in 0..<map.sizes.count {
+            let pixel = try! XCTUnwrap(map.labels.firstIndex(of: Int32(space)))
+            engine.fill(at: CGPoint(x: (CGFloat(pixel % 300) + 0.5) / 300, y: (CGFloat(pixel / 300) + 0.5) / 300),
+                        color: blue, glitterStyle: .none,
+                        options: PaintOptions(effect: .dots, secondColor: PaintColor.palette[19]))
+        }
+        XCTAssertTrue(map.progress(paint: engine.paint).finished, "Dots on white still count as colored")
+    }
+
     func testCatalogHasLargeDistinctCollectionsAndEnclosedColorableRegions() {
         XCTAssertGreaterThanOrEqual(MandalaTemplate.all.count, 96)
         XCTAssertEqual(Set(MandalaTemplate.all.map(\.id)).count, MandalaTemplate.all.count)

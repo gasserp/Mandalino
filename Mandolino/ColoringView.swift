@@ -35,6 +35,9 @@ struct ColoringView: View {
     @AppStorage("appLanguage") private var language = "de"
     @AppStorage("glitterStyle") private var glitterRaw = 0
     @AppStorage("myColors") private var myColorsRaw = ""
+    @AppStorage("finishedPages") private var finishedPagesRaw = ""
+    @State private var celebrating = false
+    @State private var pending = PendingPaint()
     let template: MandalaTemplate?
     @StateObject private var engine: CanvasEngine
     @Environment(\.dismiss) private var dismiss
@@ -125,7 +128,19 @@ struct ColoringView: View {
             .padding(16)
             .background(Theme.cream)
         }
-        .onAppear { flash([engine.hint, "Pinch to zoom. Move around with two fingers."]) }
+        .onAppear {
+            flash([engine.hint, "Pinch to zoom. Move around with two fingers."])
+            engine.updateProgress()
+        }
+        .onChange(of: engine.progress) { old, new in
+            guard let new else { return }
+            record(new)
+            // Only the moment she finishes, not when she opens a page that was already done.
+            if let old, !old.finished, new.finished { celebrate() }
+        }
+        .overlay {
+            if celebrating && !UIAccessibility.isReduceMotionEnabled { Confetti() }
+        }
         .onChange(of: engine.hint) { _, hint in flash([hint]) }
         .onChange(of: tool) { _, tool in flash([help(for: tool)]) }
         .onChange(of: symmetry) { _, symmetry in
@@ -176,6 +191,17 @@ struct ColoringView: View {
                 .font(.system(size: 23, weight: .bold, design: .rounded))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(1)
+            if let progress = engine.progress, progress.total > 0 {
+                Label("\(progress.done) / \(progress.total)", systemImage: progress.finished ? "star.fill" : "star")
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(progress.finished ? Color.orange : Theme.teal)
+                    .padding(.horizontal, 12)
+                    .frame(height: 36)
+                    .background(.white, in: Capsule())
+                    .accessibilityLabel("\(L.text("Colored spaces")): \(progress.done) / \(progress.total)")
+                    .accessibilityIdentifier("progress")
+            }
             Spacer(minLength: 8)
             headerButton("Share", symbol: "square.and.arrow.up", id: "share") {
                 engine.save()
@@ -252,7 +278,7 @@ struct ColoringView: View {
             let side = min(geometry.size.width, geometry.size.height)
             DrawingSurface(engine: engine, tool: tool, color: selectedColor,
                            glitterStyle: glitterStyle, paintOptions: paintOptions,
-                           lineWidth: brushSize.width(for: tool), symmetry: symmetry)
+                           lineWidth: brushSize.width(for: tool), symmetry: symmetry, pending: pending)
                 .accessibilityIdentifier("drawing-canvas")
                 .frame(width: side, height: side)
                 .background(.white)
@@ -636,7 +662,7 @@ struct ColoringView: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
             ForEach(GlitterStyle.allCases) { finish in
                 magicChoice(title: finish.title,
-                            image: CanvasEngine.swatch(color: selectedColor, glitter: finish, options: paintOptions),
+                            image: magicSwatch(color: selectedColor, glitter: finish, options: paintOptions),
                             shape: AnyShape(Circle()), selected: glitterStyle == finish,
                             id: "glitter-\(finish.rawValue)") { glitterRaw = Int(finish.rawValue) }
             }
@@ -649,11 +675,23 @@ struct ColoringView: View {
                 let options = PaintOptions(effect: effect, secondColor: paintOptions.secondColor,
                                            direction: paintOptions.direction)
                 magicChoice(title: effect.title,
-                            image: CanvasEngine.swatch(color: selectedColor, glitter: glitterStyle, options: options),
+                            image: magicSwatch(color: selectedColor, glitter: glitterStyle, options: options),
                             shape: AnyShape(RoundedRectangle(cornerRadius: 12)), selected: paintOptions.effect == effect,
                             id: "effect-\(effect.rawValue)") { paintOptions.effect = effect }
             }
         }
+    }
+
+    private static let blankSwatch = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).image { _ in
+        UIColor.white.setFill()
+        UIRectFill(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
+    // The twelve previews are only drawn while the Magic drawer is open. Drawing them for the hidden
+    // drawer on every color change slowed the tray's update, and a quick tap on the page right after
+    // picking a color could still paint with the previous one.
+    private func magicSwatch(color: PaintColor, glitter: GlitterStyle, options: PaintOptions) -> UIImage {
+        showingMagic ? CanvasEngine.swatch(color: color, glitter: glitter, options: options) : Self.blankSwatch
     }
 
     private func magicChoice(title: String, image: UIImage, shape: AnyShape, selected: Bool, id: String,
@@ -758,6 +796,22 @@ struct ColoringView: View {
         selectedColor = color
         if !keepPattern { paintOptions.effect = .solid }
         if tool != .brush { tool = .fill }
+        pending.set(color: color, solid: !keepPattern, tool: tool)
+    }
+
+    // The gallery marks finished pages with a star; erasing a space takes the star away again.
+    private func record(_ progress: PageProgress) {
+        guard let id = template?.id else { return }
+        var ids = Set(finishedPagesRaw.split(separator: ",").map(String.init))
+        if progress.finished { ids.insert(id) } else { ids.remove(id) }
+        let joined = ids.sorted().joined(separator: ",")
+        if joined != finishedPagesRaw { finishedPagesRaw = joined }
+    }
+
+    private func celebrate() {
+        flash(["You colored every space!"])
+        celebrating = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { celebrating = false }
     }
 
     // Newest first; the oldest of six drops off.
@@ -776,6 +830,26 @@ extension View {
     }
 }
 
+/// The color she just picked, until SwiftUI passes it to the canvas on its next update. A tap on the
+/// page that lands before that update (a quick color-then-tap) still paints with the new color.
+final class PendingPaint {
+    private(set) var color: PaintColor?
+    private(set) var solid = false
+    private(set) var tool: DrawingTool?
+
+    func set(color: PaintColor, solid: Bool, tool: DrawingTool) {
+        self.color = color
+        self.solid = solid
+        self.tool = tool
+    }
+
+    func clear() {
+        color = nil
+        solid = false
+        tool = nil
+    }
+}
+
 struct DrawingSurface: UIViewRepresentable {
     let engine: CanvasEngine
     let tool: DrawingTool
@@ -784,6 +858,7 @@ struct DrawingSurface: UIViewRepresentable {
     let paintOptions: PaintOptions
     let lineWidth: CGFloat
     let symmetry: Int
+    let pending: PendingPaint
 
     func makeUIView(context: Context) -> ZoomCanvas {
         ZoomCanvas()
@@ -798,6 +873,9 @@ struct DrawingSurface: UIViewRepresentable {
         view.paintOptions = paintOptions
         view.lineWidth = lineWidth
         view.symmetry = symmetry
+        // The canvas now has everything she picked, so nothing is pending any more.
+        view.pending = pending
+        pending.clear()
         view.accessibilityLabel = L.text("Drawing canvas")
         view.accessibilityHint = L.text("Pinch to zoom. Move around with two fingers.")
     }
@@ -875,10 +953,20 @@ final class TouchCanvas: UIView {
     var glitterStyle: GlitterStyle = .none
     var paintOptions = PaintOptions()
     var lineWidth: CGFloat = 6
+    var pending: PendingPaint?
+    private var currentColor: PaintColor { pending?.color ?? color }
+    private var currentTool: DrawingTool { pending?.tool ?? tool }
+    private var currentOptions: PaintOptions {
+        var options = paintOptions
+        if pending?.solid == true { options.effect = .solid }
+        return options
+    }
     var symmetry = 0 {
         didSet { if symmetry != oldValue { updateGuides() } }
     }
     private let guideLayer = CAShapeLayer()
+    private let revealLayer = CALayer()
+    private var revealToken = 0
     private var start: CGPoint?
     private var previous: CGPoint?
     private var sparklePoints: [CGPoint] = []
@@ -892,6 +980,8 @@ final class TouchCanvas: UIView {
         guideLayer.strokeColor = UIColor(Theme.teal).withAlphaComponent(0.4).cgColor
         guideLayer.lineWidth = 1.5
         guideLayer.lineDashPattern = [6, 6]
+        revealLayer.isHidden = true
+        layer.addSublayer(revealLayer)
         layer.addSublayer(guideLayer)
         layer.addSublayer(sparkleLayer)
         sparkleLayer.masksToBounds = true
@@ -911,6 +1001,7 @@ final class TouchCanvas: UIView {
         sparkleSize = bounds.size
         sparkleLayer.frame = bounds
         guideLayer.frame = bounds
+        revealLayer.frame = bounds
         rebuildSparkles()
         updateGuides()
     }
@@ -971,8 +1062,54 @@ final class TouchCanvas: UIView {
     // Handing the bitmap to the layer lets the GPU scale it, instead of redrawing it on the CPU every frame.
     private func showEngineImage() {
         guard let engine else { return }
+        stopReveal()
         layer.contents = engine.image.cgImage
         updateSparkles(engine.sparklePoints)
+    }
+
+    // The new color spreads out from her finger instead of appearing all at once: the old picture
+    // stays underneath while the new one shows through a growing circle.
+    private func reveal(from point: CGPoint, over previous: Any?) {
+        guard let engine, let previous, !UIAccessibility.isReduceMotionEnabled else { return }
+        revealToken += 1
+        let token = revealToken
+        let center = CGPoint(x: point.x * bounds.width, y: point.y * bounds.height)
+        let radius = hypot(max(center.x, bounds.width - center.x), max(center.y, bounds.height - center.y))
+        func circle(_ r: CGFloat) -> CGPath {
+            UIBezierPath(arcCenter: center, radius: r, startAngle: 0, endAngle: 2 * .pi, clockwise: true).cgPath
+        }
+        let mask = CAShapeLayer()
+        mask.path = circle(radius)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.contents = previous
+        revealLayer.contents = engine.image.cgImage
+        revealLayer.mask = mask
+        revealLayer.isHidden = false
+        CATransaction.commit()
+        let spread = CABasicAnimation(keyPath: "path")
+        spread.fromValue = circle(1)
+        spread.toValue = mask.path
+        spread.duration = 0.35
+        spread.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, self.revealToken == token, let engine = self.engine else { return }
+            self.stopReveal()
+            self.layer.contents = engine.image.cgImage
+        }
+        mask.add(spread, forKey: "spread")
+        CATransaction.commit()
+    }
+
+    private func stopReveal() {
+        revealToken += 1
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        revealLayer.isHidden = true
+        revealLayer.mask = nil
+        revealLayer.contents = nil
+        CATransaction.commit()
     }
 
     private func normalized(_ touch: UITouch) -> CGPoint {
@@ -987,20 +1124,20 @@ final class TouchCanvas: UIView {
         start = p
         previous = p
         erasingStroke = false
-        if !tool.isPaintTool { engine?.beginStroke() }
+        if !currentTool.isPaintTool { engine?.beginStroke() }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first, let start, let previous, tool != .fill else { return }
-        if tool == .eraser && !erasingStroke {
+        guard let touch = touches.first, let start, let previous, currentTool != .fill else { return }
+        if currentTool == .eraser && !erasingStroke {
             engine?.beginStroke()
             erasingStroke = true
         }
         for sample in event?.coalescedTouches(for: touch) ?? [touch] {
             let p = normalized(sample)
-            engine?.draw(from: tool == .pencil || tool == .brush || tool == .eraser ? self.previous ?? previous : start,
-                         to: p, tool: tool, width: lineWidth, color: color, glitterStyle: glitterStyle,
-                         options: paintOptions, symmetry: symmetry, render: false)
+            engine?.draw(from: currentTool == .pencil || currentTool == .brush || currentTool == .eraser ? self.previous ?? previous : start,
+                         to: p, tool: currentTool, width: lineWidth, color: currentColor, glitterStyle: glitterStyle,
+                         options: currentOptions, symmetry: symmetry, render: false)
             self.previous = p
         }
         engine?.renderStroke()
@@ -1009,7 +1146,7 @@ final class TouchCanvas: UIView {
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let start else { return }
         let p = normalized(touch)
-        if tool == .eraser {
+        if currentTool == .eraser {
             if erasingStroke {
                 engine?.draw(from: previous ?? start, to: p, tool: .eraser, width: lineWidth,
                              symmetry: symmetry, render: false)
@@ -1017,15 +1154,18 @@ final class TouchCanvas: UIView {
             } else {
                 engine?.erase(at: p, width: lineWidth, symmetry: symmetry)
             }
-        } else if tool == .fill {
+        } else if currentTool == .fill {
             if hypot(p.x - start.x, p.y - start.y) < 0.04 {
-                engine?.fill(at: p, color: color, glitterStyle: glitterStyle, options: paintOptions,
-                             symmetry: symmetry)
+                let before = layer.contents
+                if engine?.fill(at: p, color: currentColor, glitterStyle: glitterStyle, options: currentOptions,
+                                symmetry: symmetry) == true {
+                    reveal(from: p, over: before)
+                }
             }
         } else {
-            engine?.draw(from: tool == .pencil || tool == .brush ? previous ?? start : start,
-                         to: p, tool: tool, width: lineWidth, color: color, glitterStyle: glitterStyle,
-                         options: paintOptions, symmetry: symmetry, render: false)
+            engine?.draw(from: currentTool == .pencil || currentTool == .brush ? previous ?? start : start,
+                         to: p, tool: currentTool, width: lineWidth, color: currentColor, glitterStyle: glitterStyle,
+                         options: currentOptions, symmetry: symmetry, render: false)
             engine?.endStroke()
         }
         self.start = nil
@@ -1036,6 +1176,39 @@ final class TouchCanvas: UIView {
         engine?.endStroke()
         start = nil
         previous = nil
+    }
+}
+
+/// Confetti falling over the page once, when she has colored every space.
+struct Confetti: View {
+    private struct Piece {
+        let x: CGFloat, drift: CGFloat, delay: Double, spin: Double, size: CGFloat, color: Color
+    }
+
+    @State private var falling = false
+    @State private var pieces: [Piece] = (0..<80).map { _ in
+        Piece(x: .random(in: 0...1), drift: .random(in: -60...60), delay: .random(in: 0...0.8),
+              spin: .random(in: 180...720), size: .random(in: 10...18),
+              color: Color(uiColor: PaintColor.palette.randomElement()!.uiColor))
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            ForEach(pieces.indices, id: \.self) { i in
+                let piece = pieces[i]
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(piece.color)
+                    .frame(width: piece.size, height: piece.size * 0.55)
+                    .rotationEffect(.degrees(falling ? piece.spin : 0))
+                    .position(x: piece.x * geometry.size.width + (falling ? piece.drift : 0),
+                              y: falling ? geometry.size.height + 40 : -40)
+                    .animation(.easeIn(duration: 2.4).delay(piece.delay), value: falling)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear { falling = true }
     }
 }
 

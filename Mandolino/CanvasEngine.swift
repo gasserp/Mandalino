@@ -197,6 +197,71 @@ enum CanvasStorageError: LocalizedError {
     var errorDescription: String? { L.text("This saved drawing could not be read. The original page is still available.") }
 }
 
+struct PageProgress: Equatable {
+    let done: Int
+    let total: Int
+    var finished: Bool { total > 0 && done >= total }
+}
+
+/// The spaces of a coloring page that are big enough to color, found once from its outline.
+/// Spaces touching the page edge (the background) and specks too small to tap don't count.
+final class SpaceMap {
+    let labels: [Int32]
+    let sizes: [Int]
+
+    init(lines: [UInt8], size: Int) {
+        let count = size * size
+        var labels = [Int32](repeating: -1, count: count)
+        var sizes: [Int] = []
+        var seen = [Bool](repeating: false, count: count)
+        var queue = [Int32](repeating: 0, count: count)
+        let minimum = max(1, count / 5000)
+        lines.withUnsafeBufferPointer { line in
+            seen.withUnsafeMutableBufferPointer { seen in
+                queue.withUnsafeMutableBufferPointer { q in
+                    labels.withUnsafeMutableBufferPointer { label in
+                        for seed in 0..<count where !seen[seed] && line[seed] >= 200 {
+                            q[0] = Int32(seed); seen[seed] = true
+                            var found = 1, cursor = 0, touchesEdge = false
+                            while cursor < found {
+                                let index = Int(q[cursor]); cursor += 1
+                                let x = index % size, y = index / size
+                                if x == 0 || y == 0 || x == size - 1 || y == size - 1 { touchesEdge = true }
+                                for (valid, next) in [(x > 0, index - 1), (x + 1 < size, index + 1),
+                                                      (y > 0, index - size), (y + 1 < size, index + size)]
+                                    where valid && !seen[next] && line[next] >= 200 {
+                                    seen[next] = true; q[found] = Int32(next); found += 1
+                                }
+                            }
+                            guard !touchesEdge && found >= minimum else { continue }
+                            let number = Int32(sizes.count)
+                            for i in 0..<found { label[Int(q[i])] = number }
+                            sizes.append(found)
+                        }
+                    }
+                }
+            }
+        }
+        self.labels = labels
+        self.sizes = sizes
+    }
+
+    /// A space counts as colored once a tenth of it is not white, so dotted patterns on white and
+    /// a brush stroke through it count too, while white paint (like erasing) does not.
+    func progress(paint: [UInt8]) -> PageProgress {
+        var colored = [Int](repeating: 0, count: sizes.count)
+        paint.withUnsafeBufferPointer { p in
+            labels.withUnsafeBufferPointer { l in
+                for i in 0..<l.count where l[i] >= 0 {
+                    let o = i * 4
+                    if p[o] != 255 || p[o + 1] != 255 || p[o + 2] != 255 { colored[Int(l[i])] += 1 }
+                }
+            }
+        }
+        return PageProgress(done: zip(colored, sizes).filter { $0 * 10 >= $1 }.count, total: sizes.count)
+    }
+}
+
 final class CanvasEngine: ObservableObject {
     static let resolution = 1000
     let size: Int
@@ -210,6 +275,10 @@ final class CanvasEngine: ObservableObject {
     @Published private(set) var redoCount = 0
     @Published var errorMessage: String?
     @Published var hint = "Choose a color, then tap a white space."
+    /// How many of the page's spaces are colored; nil until counted, and always nil for own drawings.
+    @Published private(set) var progress: PageProgress?
+    private var spaceMap: SpaceMap?
+    private static let progressQueue = DispatchQueue(label: "Mandolino.progress", qos: .userInitiated)
     private(set) var lines: [UInt8]
     private(set) var paint: [UInt8]
     private(set) var glitterMask: [UInt8]
@@ -635,8 +704,24 @@ final class CanvasEngine: ObservableObject {
         changed()
     }
 
+    /// Counts colored spaces in the background, so the editor never waits for it.
+    func updateProgress() {
+        guard template != nil else { return }
+        let paint = self.paint, lines = originalLines, size = self.size, known = spaceMap
+        Self.progressQueue.async { [weak self] in
+            let map = known ?? SpaceMap(lines: lines, size: size)
+            let progress = map.progress(paint: paint)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.spaceMap = map
+                if self.progress != progress { self.progress = progress }
+            }
+        }
+    }
+
     private func changed() {
         refresh()
+        updateProgress()
         dirty = true
         revision += 1
         saveTask?.cancel()
