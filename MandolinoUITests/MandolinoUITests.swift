@@ -74,6 +74,12 @@ final class MandolinoUITests: XCTestCase {
             .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(app.buttons["undo"].isEnabled)
         screenshot("Restored free drawing")
+        let kept = ownDrawings.count
+        app.buttons["more"].tap()
+        app.buttons["delete-drawing"].tap()
+        app.buttons["confirm-delete"].tap()
+        XCTAssertTrue(app.buttons["new-drawing"].waitForExistence(timeout: 5))
+        XCTAssertEqual(ownDrawings.count, kept - 1, "A deleted drawing is gone from the gallery")
     }
 
     func testLandscapeAnimalColoringAndRotation() {

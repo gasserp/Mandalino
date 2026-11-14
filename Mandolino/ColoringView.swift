@@ -56,6 +56,7 @@ struct ColoringView: View {
     @State private var choosingEndColor = false
     @State private var showingMore = false
     @State private var confirmingClear = false
+    @State private var confirmingDelete = false
     @State private var mixing = false
     @State private var bubbleKeys: [String] = []
     @State private var bubbleRevision = 0
@@ -210,6 +211,7 @@ struct ColoringView: View {
             }
             headerButton("More", symbol: "ellipsis", id: "more") {
                 confirmingClear = false
+                confirmingDelete = false
                 showingMore = true
             }
             .popover(isPresented: $showingMore) { moreMenu }
@@ -247,12 +249,37 @@ struct ColoringView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
+            } else if confirmingDelete {
+                Text(L.text("Delete this drawing?"))
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                Text(L.text("It disappears from your drawings and can't be brought back."))
+                    .font(.system(size: 15, design: .rounded))
+                    .foregroundStyle(Theme.ink.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    Button(L.text("Keep drawing")) { confirmingDelete = false }
+                        .buttonStyle(.bordered)
+                    Button(L.text("Delete"), role: .destructive) {
+                        engine.delete()
+                        showingMore = false
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("confirm-delete")
+                }
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
             } else {
                 menuRow(language == "de" ? "English" : "Deutsch", symbol: "globe", id: "editor-language") {
                     language = language == "de" ? "en" : "de"
                     showingMore = false
                 }
-                menuRow(L.text("Clear"), symbol: "trash", id: "clear") { confirmingClear = true }
+                menuRow(L.text("Clear"), symbol: "arrow.counterclockwise", id: "clear") { confirmingClear = true }
+                // Only her own drawings can be deleted; coloring pages are always there.
+                if template == nil {
+                    menuRow(L.text("Delete this drawing"), symbol: "trash", id: "delete-drawing") {
+                        confirmingDelete = true
+                    }
+                }
             }
         }
         .foregroundStyle(Theme.ink)

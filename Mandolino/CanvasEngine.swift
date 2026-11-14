@@ -786,11 +786,37 @@ final class CanvasEngine: ObservableObject {
         }
     }
 
+    /// An own drawing with nothing on it. It is removed instead of saved, so a cleared drawing
+    /// disappears from the gallery instead of staying there as a white card.
+    private var isEmptyOwnDrawing: Bool {
+        template == nil && lines == originalLines && !paint.contains { $0 != 255 } && !glitterMask.contains { $0 != 0 }
+    }
+
+    /// Set once the drawing is deleted, so leaving the page doesn't save it again.
+    private(set) var deleted = false
+
+    func delete() {
+        deleted = true
+        dirty = false
+        saveTask?.cancel()
+        let documentID = documentID
+        Self.saveQueue.sync { Self.removeFiles(of: documentID) }
+    }
+
+    private static func removeFiles(of documentID: String) {
+        for pathExtension in ["mandolino", "json", "png"] {
+            if let url = try? fileURL(documentID, pathExtension) { try? FileManager.default.removeItem(at: url) }
+        }
+    }
+
     private func saveInBackground() {
-        guard dirty else { return }
+        guard dirty, !deleted else { return }
         let state = snapshot, image = image, documentID = documentID, savingRevision = revision
+        let empty = isEmptyOwnDrawing
         Self.saveQueue.async { [weak self] in
-            let result = Result { try Self.write(state, image: image, documentID: documentID) }
+            let result = Result {
+                if empty { Self.removeFiles(of: documentID) } else { try Self.write(state, image: image, documentID: documentID) }
+            }
             Task { @MainActor [weak self] in
                 guard let self, self.revision == savingRevision, self.dirty else { return }
                 switch result {
@@ -803,10 +829,12 @@ final class CanvasEngine: ObservableObject {
     }
 
     func save() {
-        guard dirty else { return }
+        guard dirty, !deleted else { return }
         do {
-            let state = snapshot, image = image
-            try Self.saveQueue.sync { try Self.write(state, image: image, documentID: documentID) }
+            let state = snapshot, image = image, empty = isEmptyOwnDrawing
+            try Self.saveQueue.sync {
+                if empty { Self.removeFiles(of: documentID) } else { try Self.write(state, image: image, documentID: documentID) }
+            }
             dirty = false
         } catch {
             errorMessage = "\(L.text("Your drawing could not be saved:")) \(error.localizedDescription)"

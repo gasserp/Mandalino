@@ -398,6 +398,27 @@ final class CanvasEngineTests: XCTestCase {
         XCTAssertEqual(pixel(engine, 0.1, 0.1), [255, 255, 255], "The color does not cross the line")
     }
 
+    func testClearedOrDeletedOwnDrawingsAreRemoved() throws {
+        let id = CanvasEngine.newOwnDrawingID()
+        defer { try? FileManager.default.removeItem(at: savedFileURL(id, "mandolino")) }
+        let engine = CanvasEngine(template: nil, documentID: id, restore: false)
+        box(engine)
+        engine.save()
+        XCTAssertTrue(CanvasEngine.ownDrawingIDs().contains(id))
+        engine.reset()
+        engine.save()
+        XCTAssertFalse(CanvasEngine.ownDrawingIDs().contains(id), "A cleared own drawing is removed, not kept blank")
+        engine.undo()
+        engine.save()
+        XCTAssertTrue(CanvasEngine.ownDrawingIDs().contains(id), "Undo brings it back while still on the page")
+        engine.delete()
+        XCTAssertFalse(CanvasEngine.ownDrawingIDs().contains(id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try CanvasEngine.thumbnailURL(for: id).path))
+        box(engine)
+        engine.save()
+        XCTAssertFalse(CanvasEngine.ownDrawingIDs().contains(id), "Leaving after deleting doesn't save it again")
+    }
+
     func testCatalogHasLargeDistinctCollectionsAndEnclosedColorableRegions() {
         XCTAssertGreaterThanOrEqual(MandalaTemplate.all.count, 96)
         XCTAssertEqual(Set(MandalaTemplate.all.map(\.id)).count, MandalaTemplate.all.count)
