@@ -659,6 +659,63 @@ final class CanvasEngineTests: XCTestCase {
         XCTAssertEqual(pixel(engine, 0.03, 0.03), [255, 255, 255], "The fill must stay inside the petals")
     }
 
+    private func brushRing(_ engine: CanvasEngine, color: PaintColor) {
+        engine.beginStroke()
+        let ring = arc(from: 0, to: 2 * .pi + 0.2, radius: 0.25)
+        for pair in zip(ring, ring.dropFirst()) {
+            engine.draw(from: pair.0, to: pair.1, tool: .brush, width: 18, color: color)
+        }
+        engine.endStroke()
+    }
+
+    func testFillStaysInsideAShapeDrawnWithTheBrush() throws {
+        let engine = CanvasEngine(template: nil, size: 300, restore: false)
+        brushRing(engine, color: blue)
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none)
+        XCTAssertEqual(pixel(engine, 0.5, 0.5), [red.red, red.green, red.blue])
+        XCTAssertEqual(pixel(engine, 0.05, 0.05), [255, 255, 255], "The fill must stay inside the brush ring")
+        XCTAssertEqual(pixel(engine, 0.75, 0.5), [blue.red, blue.green, blue.blue], "The ring keeps its color")
+        // Tapping the ring itself recolors just the ring.
+        let green = PaintColor.palette[6]
+        engine.fill(at: CGPoint(x: 0.75, y: 0.5), color: green, glitterStyle: .none)
+        XCTAssertEqual(pixel(engine, 0.75, 0.5), [green.red, green.green, green.blue])
+        XCTAssertEqual(pixel(engine, 0.5, 0.5), [red.red, red.green, red.blue])
+        // The wall comes back with Undo and survives saving.
+        engine.undo()
+        engine.undo()
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none)
+        XCTAssertEqual(pixel(engine, 0.05, 0.05), [255, 255, 255])
+    }
+
+    func testErasedOrWhiteBrushStrokesAreNoWall() {
+        let engine = CanvasEngine(template: nil, size: 300, restore: false)
+        brushRing(engine, color: PaintColor.palette[19])
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none)
+        XCTAssertEqual(pixel(engine, 0.05, 0.05), [red.red, red.green, red.blue], "Invisible white strokes don't block")
+        let other = CanvasEngine(template: nil, size: 300, restore: false)
+        brushRing(other, color: blue)
+        other.beginStroke()
+        other.draw(from: CGPoint(x: 0.6, y: 0.5), to: CGPoint(x: 0.9, y: 0.5), tool: .eraser, width: 36)
+        other.endStroke()
+        other.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitterStyle: .none)
+        XCTAssertEqual(pixel(other, 0.05, 0.05), [red.red, red.green, red.blue], "Rubbed out strokes don't block")
+    }
+
+    func testCancelledStrokeIsTakenBackWithoutAnUndoStep() {
+        let engine = CanvasEngine(template: nil, size: 300, restore: false)
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.2, y: 0.5), to: CGPoint(x: 0.6, y: 0.5), tool: .pencil, width: 6)
+        engine.draw(from: CGPoint(x: 0.2, y: 0.7), to: CGPoint(x: 0.6, y: 0.7), tool: .brush, width: 18, color: red)
+        engine.cancelStroke()
+        XCTAssertFalse(engine.lines.contains { $0 < 200 })
+        XCTAssertEqual(pixel(engine, 0.4, 0.7), [255, 255, 255])
+        XCTAssertEqual(engine.undoCount, 0)
+    }
+
+    func testCanvasPassesTouchesOnWithoutDelay() {
+        XCTAssertFalse(ZoomCanvas().delaysContentTouches, "Lines must start where the finger lands")
+    }
+
     func testOpenPencilShapesStayOpen() {
         let engine = CanvasEngine(template: nil, size: 300, restore: false)
         // A letter C: its opening is wide compared with the line, so it is not closed.
