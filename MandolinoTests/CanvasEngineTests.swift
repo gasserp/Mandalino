@@ -641,6 +641,24 @@ final class CanvasEngineTests: XCTestCase {
         XCTAssertEqual(pixel(engine, 0.5, 0.7), [255, 255, 255], "The line now splits the box in two")
     }
 
+    func testMirroredHalfShapeStoppingShortOfTheMirrorIsJoinedToItsCopy() {
+        let engine = CanvasEngine(template: nil, size: 300, restore: false)
+        // Half a petal right of the middle line; the mirror draws the other half. Both ends stop
+        // a little short of the middle, so the halves don't meet.
+        let half = (0...40).map { i -> CGPoint in
+            let a = CGFloat(i) / 40 * .pi
+            return CGPoint(x: 0.51 + sin(a) * 0.1, y: 0.3 - CGFloat(i) / 40 * 0.2)
+        }
+        engine.beginStroke()
+        for pair in zip(half, half.dropFirst()) {
+            engine.draw(from: pair.0, to: pair.1, tool: .pencil, width: 6, symmetry: 6)
+        }
+        engine.endStroke()
+        engine.fill(at: CGPoint(x: 0.55, y: 0.2), color: red, glitterStyle: .none, symmetry: 6)
+        XCTAssertEqual(pixel(engine, 0.55, 0.2), [red.red, red.green, red.blue])
+        XCTAssertEqual(pixel(engine, 0.03, 0.03), [255, 255, 255], "The fill must stay inside the petals")
+    }
+
     func testOpenPencilShapesStayOpen() {
         let engine = CanvasEngine(template: nil, size: 300, restore: false)
         // A letter C: its opening is wide compared with the line, so it is not closed.
