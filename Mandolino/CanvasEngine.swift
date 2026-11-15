@@ -202,6 +202,8 @@ struct CanvasSnapshot: Codable {
     let lines: Data
     let paint: Data
     let glitter: Data?
+    /// Where brush strokes are (1), which fills don't cross. Missing in drawings saved before.
+    var brush: Data? = nil
 }
 
 enum CanvasStorageError: LocalizedError {
@@ -294,6 +296,9 @@ final class CanvasEngine: ObservableObject {
     private(set) var lines: [UInt8]
     private(set) var paint: [UInt8]
     private(set) var glitterMask: [UInt8]
+    /// Pixels painted with the brush. A fill stops at them like at a black outline, so a shape drawn
+    /// with the brush can be filled inside.
+    private(set) var brushMask: [UInt8]
     private(set) var sparklePoints: [CGPoint] = []
     private var originalLines: [UInt8]
     private var outlineImage: CGImage?
@@ -318,6 +323,7 @@ final class CanvasEngine: ObservableObject {
         originalLines = lines
         paint = [UInt8](repeating: 255, count: size * size * 4)
         glitterMask = [UInt8](repeating: 0, count: size * size)
+        brushMask = [UInt8](repeating: 0, count: size * size)
         renderOriginal()
         if restore {
             do {
@@ -334,7 +340,8 @@ final class CanvasEngine: ObservableObject {
                 if let saved {
                     guard saved.size == size, saved.lines.count == size * size,
                           saved.paint.count == size * size * 4,
-                          saved.glitter == nil || saved.glitter?.count == size * size else {
+                          saved.glitter == nil || saved.glitter?.count == size * size,
+                          saved.brush == nil || saved.brush?.count == size * size else {
                         throw CanvasStorageError.invalidDrawing
                     }
                     apply(saved)
@@ -347,7 +354,8 @@ final class CanvasEngine: ObservableObject {
     }
 
     private var snapshot: CanvasSnapshot {
-        CanvasSnapshot(size: size, lines: Data(lines), paint: Data(paint), glitter: Data(glitterMask))
+        CanvasSnapshot(size: size, lines: Data(lines), paint: Data(paint), glitter: Data(glitterMask),
+                       brush: Data(brushMask))
     }
 
     private func apply(_ state: CanvasSnapshot) {
@@ -355,6 +363,13 @@ final class CanvasEngine: ObservableObject {
         outlineImage = nil
         paint = Array(state.paint)
         glitterMask = state.glitter.map(Array.init) ?? [UInt8](repeating: 0, count: size * size)
+        brushMask = state.brush.map(Array.init) ?? [UInt8](repeating: 0, count: size * size)
+    }
+
+    /// White paint on white paper is invisible, so it is no wall for a fill and clears one instead.
+    private static func paintsWhite(_ color: PaintColor, _ options: PaintOptions) -> Bool {
+        func white(_ c: PaintColor) -> Bool { c.red == 255 && c.green == 255 && c.blue == 255 }
+        return white(color) && (options.effect == .solid || white(options.secondColor))
     }
 
     private func withLineContext(_ draw: (CGContext) -> Void) {
@@ -430,7 +445,10 @@ final class CanvasEngine: ObservableObject {
             var count = 0
             var edge: [Int32] = []
             var minX = seed % size, maxX = minX, minY = seed / size, maxY = minY
-            // Connectivity comes from outlines, not paint: colored and glitter regions remain recolorable.
+            // Connectivity comes from outlines and brush strokes, not from other paint: filled and glitter
+            // regions remain recolorable. A fill started on a brush stroke recolors that stroke.
+            let onBrush = brushMask[seed]
+            let brush = brushMask
             lines.withUnsafeBufferPointer { lineBuffer in
                 visited.withUnsafeMutableBufferPointer { seen in
                     queue.withUnsafeMutableBufferPointer { q in
@@ -438,6 +456,7 @@ final class CanvasEngine: ObservableObject {
                         var cursor = 0
                         func visit(_ next: Int) {
                             guard !seen[next] else { return }
+                            if lineBuffer[next] >= 200 && brush[next] != onBrush { return }
                             seen[next] = true
                             if lineBuffer[next] >= 200 {
                                 q[count] = Int32(next); count += 1
@@ -492,6 +511,9 @@ final class CanvasEngine: ObservableObject {
                     for i in 0..<count { paintPixel(Int(queue[i])) }
                     for index in edge { paintPixel(Int(index)) }
                 }
+            }
+            if onBrush != 0 && Self.paintsWhite(color, options) {
+                for i in 0..<count { brushMask[Int(queue[i])] = 0 }
             }
         }
         hint = glitterStyle != .none ? "A little sparkle! Tap another space to keep coloring." : "Lovely! Keep adding your colors."
@@ -722,6 +744,7 @@ final class CanvasEngine: ObservableObject {
                                            width: diameter, height: diameter))
         }
         let bounds = CGRect(x: 0, y: 0, width: size, height: size)
+        let wall: UInt8 = Self.paintsWhite(color, options) ? 0 : 1
         if erasing { outlineImage = nil }
         for y in minY...maxY {
             for x in minX...maxX {
@@ -732,6 +755,7 @@ final class CanvasEngine: ObservableObject {
                     lines[index] = originalLines[index]
                     paint[index * 4] = 255; paint[index * 4 + 1] = 255; paint[index * 4 + 2] = 255
                     glitterMask[index] = 0
+                    brushMask[index] = 0
                     continue
                 }
                 let base = Self.shine(options.sample(color: color, x: x, y: y, size: size, bounds: bounds),
@@ -744,6 +768,8 @@ final class CanvasEngine: ObservableObject {
                 }
                 blend(rgb.0, channel: 0); blend(rgb.1, channel: 1); blend(rgb.2, channel: 2)
                 glitterMask[index] = glitterStyle.rawValue
+                // Only the stroke's solid middle: a fill still reaches into its soft edge.
+                if amount >= 128 { brushMask[index] = wall }
             }
         }
     }
@@ -838,6 +864,15 @@ final class CanvasEngine: ObservableObject {
         pencilStroke = nil
     }
 
+    /// Takes back a line that turned out to be the first finger of a pinch or a two-finger move.
+    func cancelStroke() {
+        guard let strokeBase else { return }
+        self.strokeBase = nil
+        pencilStroke = nil
+        apply(strokeBase)
+        refresh()
+    }
+
     func undo() {
         guard let state = undoStack.popLast() else { return }
         redoStack.append(snapshot)
@@ -856,6 +891,7 @@ final class CanvasEngine: ObservableObject {
         checkpoint()
         paint = [UInt8](repeating: 255, count: size * size * 4)
         glitterMask = [UInt8](repeating: 0, count: size * size)
+        brushMask = [UInt8](repeating: 0, count: size * size)
         renderOriginal()
         changed()
     }

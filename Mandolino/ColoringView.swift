@@ -966,6 +966,9 @@ final class ZoomCanvas: UIScrollView, UIScrollViewDelegate {
         showsVerticalScrollIndicator = false
         contentInsetAdjustmentBehavior = .never
         panGestureRecognizer.minimumNumberOfTouches = 2
+        // Held-back touches lost the start of every line: it reached the page only after a moment,
+        // as a straight jump. A line that turns into a pinch is taken back instead (touchesCancelled).
+        delaysContentTouches = false
         pinchGestureRecognizer?.isEnabled = false
         addGestureRecognizer(UIPinchGestureRecognizer(target: self, action: #selector(magnify(_:))))
         isMultipleTouchEnabled = true
@@ -1243,7 +1246,7 @@ final class TouchCanvas: UIView {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        engine?.endStroke()
+        engine?.cancelStroke()
         start = nil
         previous = nil
     }
