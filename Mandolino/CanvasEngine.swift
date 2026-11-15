@@ -804,16 +804,21 @@ final class CanvasEngine: ObservableObject {
                 // Already touching another line: nothing to join.
                 if base[py * size + px] < 200 { continue }
                 var best: (point: CGPoint, distance: CGFloat)?
-                // Its own line, leaving out the part right next to this end.
-                for i in 0..<(points.count - 1) {
-                    let away = atStart ? along[i] : length - along[i + 1]
-                    guard away > reach * 4 else { continue }
-                    let a = points[i], b = points[i + 1]
-                    let dx = b.x - a.x, dy = b.y - a.y
-                    let t = dx == 0 && dy == 0 ? 0 : min(max(((end.x - a.x) * dx + (end.y - a.y) * dy) / (dx * dx + dy * dy), 0), 1)
-                    let p = CGPoint(x: a.x + dx * t, y: a.y + dy * t)
-                    let d = hypot(p.x - end.x, p.y - end.y)
-                    if d < reach && d < (best?.distance ?? .infinity) { best = (p, d) }
+                // Its own line, leaving out the part right next to this end, and with mirror drawing
+                // its copies too: half a petal is closed by its mirror image, and an end that stops
+                // short of the mirror line leaves twice that gap, so copies are joined from further.
+                for (copy, transform) in Self.symmetryTransforms(symmetry, side: 1).enumerated() {
+                    let limit = copy == 0 ? reach : reach * 2
+                    for i in 0..<(points.count - 1) {
+                        let away = atStart ? along[i] : length - along[i + 1]
+                        guard copy > 0 || away > reach * 4 else { continue }
+                        let a = points[i].applying(transform), b = points[i + 1].applying(transform)
+                        let dx = b.x - a.x, dy = b.y - a.y
+                        let t = dx == 0 && dy == 0 ? 0 : min(max(((end.x - a.x) * dx + (end.y - a.y) * dy) / (dx * dx + dy * dy), 0), 1)
+                        let p = CGPoint(x: a.x + dx * t, y: a.y + dy * t)
+                        let d = hypot(p.x - end.x, p.y - end.y)
+                        if d < limit && d < (best?.distance ?? .infinity) { best = (p, d) }
+                    }
                 }
                 // Lines that were there before this one.
                 let r = Int(reach * CGFloat(size))
