@@ -8,7 +8,10 @@ struct MandolinoApp: App {
         } else if ProcessInfo.processInfo.arguments.contains("-UITestGerman") {
             UserDefaults.standard.set("de", forKey: "appLanguage")
         }
-        Task.detached(priority: .utility) { CanvasEngine.convertLegacyDrawings() }
+        Task.detached(priority: .utility) {
+            CanvasEngine.convertLegacyDrawings()
+            CanvasEngine.starFinishedPages()
+        }
     }
 
     var body: some Scene {
@@ -36,7 +39,7 @@ struct GalleryView: View {
     @State private var previewRevisions: [String: Int] = [:]
     @State private var showingSettings = false
     @State private var ownDrawings: [String] = []
-    @AppStorage("finishedPages") private var finishedPagesRaw = ""
+    @AppStorage(CanvasEngine.finishedPagesKey) private var finishedPagesRaw = ""
 
     struct Page: Identifiable {
         let template: MandalaTemplate?
@@ -84,7 +87,7 @@ struct GalleryView: View {
                 let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 6)
                 ForEach(MandalaTemplate.all.filter { $0.difficulty == difficulty && $0.variation == 0 }) { design in
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(design.localizedTitle)
+                        Text(design.rowTitle)
                             .font(.system(size: 21, weight: .bold, design: .rounded))
                             .foregroundStyle(Theme.ink)
                         LazyVGrid(columns: columns, spacing: 12) {
@@ -187,8 +190,12 @@ struct GalleryView: View {
         return Button { difficulty = level } label: {
             VStack(spacing: 4) {
                 HStack(spacing: 2) {
-                    ForEach(0..<stars, id: \.self) { _ in
-                        Image(systemName: "star.fill").font(.system(size: 14, weight: .bold))
+                    if level == .art {
+                        Image(systemName: "paintpalette.fill").font(.system(size: 14, weight: .bold))
+                    } else {
+                        ForEach(0..<stars, id: \.self) { _ in
+                            Image(systemName: "star.fill").font(.system(size: 14, weight: .bold))
+                        }
                     }
                 }
                 Text(level.title)
@@ -211,6 +218,7 @@ struct GalleryView: View {
         case .medium: return Theme.teal
         case .hard: return Color(red: 0.84, green: 0.42, blue: 0.16)
         case .expert: return Theme.violet
+        case .art: return Color(red: 0.72, green: 0.27, blue: 0.47)
         }
     }
 

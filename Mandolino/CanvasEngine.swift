@@ -33,12 +33,16 @@ struct PaintColor: Identifiable {
         (30, 51, 107, "Navy"), (95, 57, 155, "Plum"),
         (210, 52, 157, "Magenta"), (249, 200, 235, "Blush"),
         (96, 57, 38, "Chocolate"), (191, 156, 118, "Caramel"),
-        (192, 200, 210, "Silver"), (255, 248, 229, "Ivory")
+        (192, 200, 210, "Silver"), (255, 248, 229, "Ivory"),
+        (218, 170, 40, "Shiny gold"), (196, 201, 212, "Shiny silver")
     ]
     static let palette: [PaintColor] = paletteValues.enumerated().map {
         PaintColor(id: $0.offset, name: $0.element.3, red: $0.element.0,
                    green: $0.element.1, blue: $0.element.2)
     }
+
+    /// Shiny gold and shiny silver paint with a metal sheen instead of a flat color.
+    var isMetallic: Bool { id == 40 || id == 41 }
 
     static func mix(_ a: PaintColor, _ b: PaintColor) -> PaintColor {
         mix([(a, 1), (b, 1)])
@@ -296,6 +300,8 @@ final class CanvasEngine: ObservableObject {
     private var undoStack: [CanvasSnapshot] = []
     private var redoStack: [CanvasSnapshot] = []
     private var strokeBase: CanvasSnapshot?
+    /// The points of the pencil line being drawn, so its ends can be joined when it is finished.
+    private var pencilStroke: (points: [CGPoint], width: CGFloat, symmetry: Int)?
     private var saveTask: Task<Void, Never>?
     // Shared by all pages so the old-format conversion and a page's own saves never interleave.
     private static let saveQueue = DispatchQueue(label: "Mandolino.drawing-save", qos: .utility)
@@ -475,7 +481,8 @@ final class CanvasEngine: ObservableObject {
                 glitterMask.withUnsafeMutableBufferPointer { mask in
                     func paintPixel(_ index: Int) {
                         let px = index % size, py = index / size
-                        let base = options.sample(color: color, x: px, y: py, size: size, bounds: bounds)
+                        let base = Self.shine(options.sample(color: color, x: px, y: py, size: size, bounds: bounds),
+                                              metallic: color.isMetallic, x: px, y: py)
                         let rgb = Self.texture(base, style: glitterStyle, x: px, y: py)
                         mask[index] = style
                         let offset = index * 4
@@ -505,7 +512,8 @@ final class CanvasEngine: ObservableObject {
         let bounds = CGRect(x: 0, y: 0, width: side, height: side)
         for y in 0..<side {
             for x in 0..<side {
-                let base = options.sample(color: color, x: x, y: y, size: resolution, bounds: bounds)
+                let base = shine(options.sample(color: color, x: x, y: y, size: resolution, bounds: bounds),
+                                 metallic: color.isMetallic, x: x, y: y)
                 let rgb = texture(base, style: glitter, x: x, y: y)
                 let offset = (y * side + x) * 4
                 pixels[offset] = rgb.0; pixels[offset + 1] = rgb.1; pixels[offset + 2] = rgb.2
@@ -530,6 +538,32 @@ final class CanvasEngine: ObservableObject {
             &+ UInt32(truncatingIfNeeded: y) &* 668_265_263
         value = (value ^ (value >> 13)) &* 1_274_126_177
         return value ^ (value >> 16)
+    }
+
+    /// A smooth random value between 0 and 1 that changes gently from pixel to pixel.
+    private static func smoothNoise(_ x: Double, _ y: Double) -> Double {
+        let x0 = Int(floor(x)), y0 = Int(floor(y))
+        let fx = x - floor(x), fy = y - floor(y)
+        func corner(_ i: Int, _ j: Int) -> Double { Double(noise(x: i, y: j) & 1023) / 1023 }
+        let sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy)
+        let top = corner(x0, y0) + (corner(x0 + 1, y0) - corner(x0, y0)) * sx
+        let bottom = corner(x0, y0 + 1) + (corner(x0 + 1, y0 + 1) - corner(x0, y0 + 1)) * sx
+        return top + (bottom - top) * sy
+    }
+
+    /// Metal paint: wavy bands of shadow and bright highlight, like gold or silver foil, with a fine
+    /// brushed grain. Other colors pass through unchanged.
+    static func shine(_ color: (UInt8, UInt8, UInt8), metallic: Bool, x: Int, y: Int) -> (UInt8, UInt8, UInt8) {
+        guard metallic else { return color }
+        let warp = smoothNoise(Double(x) / 90, Double(y) / 90) * 2.6
+        var t = 0.5 + 0.5 * sin((Double(x) + Double(y) * 0.6) / 20 + warp)
+        t = t * t * (3 - 2 * t) + (Double(noise(x: x, y: y) & 31) - 15.5) / 400
+        func channel(_ value: UInt8) -> UInt8 {
+            let v = Double(value)
+            let shaded = t < 0.5 ? v * (0.5 + t) : v + (255 - v) * (t - 0.5) * 1.5
+            return UInt8(min(max(shaded, 0), 254))
+        }
+        return (channel(color.0), channel(color.1), channel(color.2))
     }
 
     private static func texture(_ color: (UInt8, UInt8, UInt8), style: GlitterStyle,
@@ -573,6 +607,7 @@ final class CanvasEngine: ObservableObject {
 
     func beginStroke() {
         strokeBase = snapshot
+        pencilStroke = nil
     }
 
     func draw(from start: CGPoint, to end: CGPoint, tool: DrawingTool, width: CGFloat,
@@ -591,6 +626,11 @@ final class CanvasEngine: ObservableObject {
         if tool != .pencil, let strokeBase {
             lines = Array(strokeBase.lines)
             outlineImage = nil
+        }
+        if tool == .pencil, strokeBase != nil {
+            var stroke = pencilStroke ?? ([start], width, symmetry)
+            stroke.points.append(end)
+            pencilStroke = stroke
         }
         withLineContext { context in
             context.setStrokeColor(UIColor.black.cgColor)
@@ -694,7 +734,8 @@ final class CanvasEngine: ObservableObject {
                     glitterMask[index] = 0
                     continue
                 }
-                let base = options.sample(color: color, x: x, y: y, size: size, bounds: bounds)
+                let base = Self.shine(options.sample(color: color, x: x, y: y, size: size, bounds: bounds),
+                                      metallic: color.isMetallic, x: x, y: y)
                 let rgb = Self.texture(base, style: glitterStyle, x: x, y: y)
                 let alpha = Double(amount) / 255
                 func blend(_ value: UInt8, channel: Int) {
@@ -726,6 +767,10 @@ final class CanvasEngine: ObservableObject {
 
     func endStroke() {
         guard let strokeBase else { return }
+        if let stroke = pencilStroke {
+            pencilStroke = nil
+            joinPencilEnds(stroke.points, width: stroke.width, symmetry: stroke.symmetry, before: strokeBase.lines)
+        }
         self.strokeBase = nil
         guard Data(lines) != strokeBase.lines || Data(paint) != strokeBase.paint ||
               Data(glitterMask) != strokeBase.glitter else { return }
@@ -733,6 +778,59 @@ final class CanvasEngine: ObservableObject {
         hint = Data(lines) != strokeBase.lines ? "Close your lines, then use Fill to color inside." :
             "Lovely! Keep adding your colors."
         changed()
+    }
+
+    /// A hand-drawn shape is rarely closed exactly, and through a gap of a few pixels a fill ran out over
+    /// the whole page. So a pencil line that ends close to where it started is closed, and an end that
+    /// stops just short of another line, or of its own line further back, is joined to it. The joins
+    /// are part of the same stroke, so one Undo removes them with it.
+    private func joinPencilEnds(_ points: [CGPoint], width: CGFloat, symmetry: Int, before: Data) {
+        var along: [CGFloat] = [0]
+        for (a, b) in zip(points, points.dropFirst()) { along.append(along.last! + hypot(b.x - a.x, b.y - a.y)) }
+        let length = along.last!
+        // A tap or a tiny tick is left as it is.
+        guard length > 0.03 else { return }
+        let first = points[0], last = points[points.count - 1]
+        let gap = hypot(last.x - first.x, last.y - first.y)
+        var joins: [(CGPoint, CGPoint)] = []
+        // A loop with a small opening, not a letter C or a bow: the gap is short next to the line.
+        if gap < 0.05 && gap < length * 0.12 {
+            joins.append((last, first))
+        } else {
+            let reach: CGFloat = 0.02
+            let base = Array(before)
+            for (end, atStart) in [(last, false), (first, true)] {
+                let px = min(Int(end.x * CGFloat(size)), size - 1), py = min(Int(end.y * CGFloat(size)), size - 1)
+                // Already touching another line: nothing to join.
+                if base[py * size + px] < 200 { continue }
+                var best: (point: CGPoint, distance: CGFloat)?
+                // Its own line, leaving out the part right next to this end.
+                for i in 0..<(points.count - 1) {
+                    let away = atStart ? along[i] : length - along[i + 1]
+                    guard away > reach * 4 else { continue }
+                    let a = points[i], b = points[i + 1]
+                    let dx = b.x - a.x, dy = b.y - a.y
+                    let t = dx == 0 && dy == 0 ? 0 : min(max(((end.x - a.x) * dx + (end.y - a.y) * dy) / (dx * dx + dy * dy), 0), 1)
+                    let p = CGPoint(x: a.x + dx * t, y: a.y + dy * t)
+                    let d = hypot(p.x - end.x, p.y - end.y)
+                    if d < reach && d < (best?.distance ?? .infinity) { best = (p, d) }
+                }
+                // Lines that were there before this one.
+                let r = Int(reach * CGFloat(size))
+                for y in max(0, py - r)...min(size - 1, py + r) {
+                    for x in max(0, px - r)...min(size - 1, px + r) where base[y * size + x] < 128 {
+                        let p = CGPoint(x: (CGFloat(x) + 0.5) / CGFloat(size), y: (CGFloat(y) + 0.5) / CGFloat(size))
+                        let d = hypot(p.x - end.x, p.y - end.y)
+                        if d < reach && d < (best?.distance ?? .infinity) { best = (p, d) }
+                    }
+                }
+                if let best { joins.append((end, best.point)) }
+            }
+        }
+        for join in joins {
+            draw(from: join.0, to: join.1, tool: .pencil, width: width, symmetry: symmetry, render: false)
+        }
+        pencilStroke = nil
     }
 
     func undo() {
@@ -759,16 +857,54 @@ final class CanvasEngine: ObservableObject {
 
     /// Counts colored spaces in the background, so the editor never waits for it.
     func updateProgress() {
-        guard template != nil else { return }
+        guard let pageID = template?.id else { return }
         let paint = self.paint, lines = originalLines, size = self.size, known = spaceMap
         Self.progressQueue.async { [weak self] in
             let map = known ?? SpaceMap(lines: lines, size: size)
             let progress = map.progress(paint: paint)
             DispatchQueue.main.async {
+                // Recorded even when she already left the page right after the last fill.
+                Self.recordFinished(pageID, progress.finished)
                 guard let self else { return }
                 self.spaceMap = map
                 if self.progress != progress { self.progress = progress }
             }
+        }
+    }
+
+    static let finishedPagesKey = "finishedPages"
+
+    /// The gallery marks finished pages with a star; erasing a space takes the star away again.
+    static func recordFinished(_ pageID: String, _ finished: Bool) {
+        let defaults = UserDefaults.standard
+        let raw = defaults.string(forKey: finishedPagesKey) ?? ""
+        var ids = Set(raw.split(separator: ",").map(String.init))
+        if finished { ids.insert(pageID) } else { ids.remove(pageID) }
+        let joined = ids.sorted().joined(separator: ",")
+        if joined != raw { defaults.set(joined, forKey: finishedPagesKey) }
+    }
+
+    /// Pages finished before there were stars never got one, since a page is only counted while it is
+    /// open. Checks every saved page once and stars the finished ones. Call it off the main thread.
+    static func starFinishedPages() {
+        let checkedKey = "finishedPagesChecked"
+        guard !UserDefaults.standard.bool(forKey: checkedKey),
+              let folder = try? drawingsFolder(),
+              let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        else { return }
+        var finished: [String] = []
+        for file in files where file.pathExtension == "mandolino" {
+            let id = file.deletingPathExtension().lastPathComponent
+            guard let template = MandalaTemplate.all.first(where: { $0.id == id }) else { continue }
+            let engine = CanvasEngine(template: template, documentID: id)
+            guard engine.errorMessage == nil else { continue }
+            if SpaceMap(lines: engine.originalLines, size: engine.size).progress(paint: engine.paint).finished {
+                finished.append(id)
+            }
+        }
+        DispatchQueue.main.async {
+            for id in finished { recordFinished(id, true) }
+            UserDefaults.standard.set(true, forKey: checkedKey)
         }
     }
 

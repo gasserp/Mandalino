@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		011FC6129D14964A346171ED /* MandolinoUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1EFECF904FF4CE40369FB20 /* MandolinoUITests.swift */; };
 		2AD024EFB670719839D0264A /* ColoringView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A4A1A6653BDCC5F0AB55DBF /* ColoringView.swift */; };
+		5BA3817D37525EA6E79A1172 /* ArtCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53BABC0719786141940DB2FA /* ArtCatalog.swift */; };
 		5F90F7E4A91E3E4C548C2E3A /* ColorMixer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7CC64ED1BFEB92DEFD3E81 /* ColorMixer.swift */; };
 		64DDA95967EF5AD4638AFEC1 /* Language.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52263FD58DD74C32F2B0A2EA /* Language.swift */; };
 		9CA8890FD1E1F8602898151C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A095BA36CBE3897E0AC490DF /* Assets.xcassets */; };
@@ -43,6 +44,7 @@
 		27CFCDC45D82AB82644AB3FD /* MandolinoTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MandolinoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3C0C1CF68C629D26D7BD63DF /* TemplateCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateCatalog.swift; sourceTree = "<group>"; };
 		52263FD58DD74C32F2B0A2EA /* Language.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Language.swift; sourceTree = "<group>"; };
+		53BABC0719786141940DB2FA /* ArtCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArtCatalog.swift; sourceTree = "<group>"; };
 		6A7CC64ED1BFEB92DEFD3E81 /* ColorMixer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorMixer.swift; sourceTree = "<group>"; };
 		6C40D43A5C00D1EC41D2C538 /* Mandolino.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mandolino.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A095BA36CBE3897E0AC490DF /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -74,6 +76,7 @@
 		E715604EFAEA78664C35062C /* Mandolino */ = {
 			isa = PBXGroup;
 			children = (
+				53BABC0719786141940DB2FA /* ArtCatalog.swift */,
 				A095BA36CBE3897E0AC490DF /* Assets.xcassets */,
 				13D940CDF5C8A71076176D2E /* CanvasEngine.swift */,
 				0A4A1A6653BDCC5F0AB55DBF /* ColoringView.swift */,
@@ -219,6 +222,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5BA3817D37525EA6E79A1172 /* ArtCatalog.swift in Sources */,
 				EC73408BA96BDD5D542FB9C5 /* CanvasEngine.swift in Sources */,
 				5F90F7E4A91E3E4C548C2E3A /* ColorMixer.swift in Sources */,
 				2AD024EFB670719839D0264A /* ColoringView.swift in Sources */,

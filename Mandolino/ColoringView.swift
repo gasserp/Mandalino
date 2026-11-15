@@ -35,14 +35,13 @@ struct ColoringView: View {
     @AppStorage("appLanguage") private var language = "de"
     @AppStorage("glitterStyle") private var glitterRaw = 0
     @AppStorage("myColors") private var myColorsRaw = ""
-    @AppStorage("finishedPages") private var finishedPagesRaw = ""
     @State private var celebrating = false
     @State private var pending = PendingPaint()
     let template: MandalaTemplate?
     @StateObject private var engine: CanvasEngine
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @State private var selectedColor = PaintColor.palette[0]
+    @State private var selectedColor = PaintColor.palette[1]
     @State private var paintOptions = PaintOptions()
     @State private var tool: DrawingTool = .fill
     @State private var lineTool: DrawingTool = .pencil
@@ -61,8 +60,9 @@ struct ColoringView: View {
     @State private var bubbleKeys: [String] = []
     @State private var bubbleRevision = 0
 
-    // Everyday colors that stay in the tray; all forty are one tap away under "All colors".
-    private static let trayColorIDs = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 16, 20, 19]
+    // Everyday colors that stay in the tray, ending with shiny gold and silver; all the others are one
+    // tap away under "All colors".
+    private static let trayColorIDs = [1, 2, 4, 5, 6, 7, 9, 10, 12, 13, 14, 16, 20, 19, 40, 41]
     private static let myColorSlots = 6
     private static let lineTools: [DrawingTool] = [.pencil, .ruler, .circle, .square,
                                                    .triangle, .star, .lineStar]
@@ -136,7 +136,6 @@ struct ColoringView: View {
         }
         .onChange(of: engine.progress) { old, new in
             guard let new else { return }
-            record(new)
             // Only the moment she finishes, not when she opens a page that was already done.
             if let old, !old.finished, new.finished { celebrate() }
         }
@@ -577,7 +576,14 @@ struct ColoringView: View {
             }
             ForEach(0..<Self.myColorSlots, id: \.self) { index in
                 if index < myColors.count {
-                    swatchButton(myColors[index], label: L.text("My colors"), id: "my-color-\(index)")
+                    let color = myColors[index]
+                    swatchButton(color, label: L.text("My colors"), id: "my-color-\(index)")
+                        .contextMenu {
+                            Button(role: .destructive) { forget(color) } label: {
+                                Label(L.text("Remove color"), systemImage: "trash")
+                            }
+                            .accessibilityIdentifier("remove-my-color")
+                        }
                 } else {
                     Button { mixing = true } label: {
                         Circle()
@@ -629,8 +635,7 @@ struct ColoringView: View {
     private func swatchButton(_ color: PaintColor, label: String, id: String) -> some View {
         let selected = same(color, selectedColor)
         return Button { select(color) } label: {
-            Circle()
-                .fill(Color(uiColor: color.uiColor))
+            ColorDot(color: color)
                 .overlay { Circle().stroke(Theme.ink.opacity(0.15), lineWidth: 1) }
                 .overlay {
                     if selected {
@@ -652,7 +657,7 @@ struct ColoringView: View {
         LazyVGrid(columns: Array(repeating: GridItem(.fixed(52), spacing: 10), count: 8), spacing: 10) {
             ForEach(PaintColor.palette) { color in
                 Button { select(color) } label: {
-                    Circle().fill(Color(uiColor: color.uiColor))
+                    ColorDot(color: color)
                         .frame(width: 52, height: 52)
                         .overlay { Circle().stroke(Theme.ink.opacity(0.2)) }
                 }
@@ -831,19 +836,16 @@ struct ColoringView: View {
         pending.set(color: color, solid: !keepPattern, tool: tool)
     }
 
-    // The gallery marks finished pages with a star; erasing a space takes the star away again.
-    private func record(_ progress: PageProgress) {
-        guard let id = template?.id else { return }
-        var ids = Set(finishedPagesRaw.split(separator: ",").map(String.init))
-        if progress.finished { ids.insert(id) } else { ids.remove(id) }
-        let joined = ids.sorted().joined(separator: ",")
-        if joined != finishedPagesRaw { finishedPagesRaw = joined }
-    }
-
     private func celebrate() {
         flash(["You colored every space!"])
         celebrating = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { celebrating = false }
+    }
+
+    // A long press on one of her colors removes it, and makes room for a new mix.
+    private func forget(_ color: PaintColor) {
+        let entry = "\(color.red),\(color.green),\(color.blue)"
+        myColorsRaw = myColorsRaw.split(separator: ";").map(String.init).filter { $0 != entry }.joined(separator: ";")
     }
 
     // Newest first; the oldest of six drops off.
@@ -859,6 +861,21 @@ extension View {
     /// Opacity alone left hidden buttons findable, so taps meant for them landed on the view underneath.
     @ViewBuilder func shown(_ visible: Bool) -> some View {
         if visible { self } else { hidden() }
+    }
+}
+
+/// A round color sample; shiny gold and silver show their metal sheen.
+struct ColorDot: View {
+    let color: PaintColor
+
+    var body: some View {
+        if color.isMetallic {
+            Image(uiImage: CanvasEngine.swatch(color: color, glitter: .none, options: PaintOptions()))
+                .resizable()
+                .clipShape(Circle())
+        } else {
+            Circle().fill(Color(uiColor: color.uiColor))
+        }
     }
 }
 

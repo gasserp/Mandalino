@@ -1,7 +1,7 @@
 import UIKit
 
 enum Difficulty: String, CaseIterable, Identifiable {
-    case easy, medium, hard, expert
+    case easy, medium, hard, expert, art
     var id: String { rawValue }
     var title: String { L.text(rawValue.capitalized) }
 }
@@ -25,7 +25,17 @@ struct MandalaTemplate: Identifiable {
     }
 
     var localizedTitle: String {
-        L.text(title) + (variation == 0 ? "" : " \(variation + 1)")
+        L.text(title) + (variation == 0 || difficulty == .art ? "" : " \(variation + 1)")
+    }
+
+    /// The heading of a design's row in the gallery. Art pages are each their own design, shown in
+    /// two rows: mandalas and animals.
+    var rowTitle: String {
+        switch designID {
+        case ArtPage.mandalas: return L.text("Mandalas")
+        case ArtPage.animals: return L.text("Pattern animals")
+        default: return localizedTitle
+        }
     }
 
     private static let originals: [MandalaTemplate] = [
@@ -80,7 +90,7 @@ struct MandalaTemplate: Identifiable {
             MandalaTemplate(id: "\(base.id)-\(variant)", title: base.title, symbol: base.symbol,
                             difficulty: base.difficulty, designID: base.id, variation: variant)
         }
-    }
+    } + ArtPage.templates
 
     func draw(in context: CGContext, size: Int) {
         context.saveGState()
@@ -90,6 +100,11 @@ struct MandalaTemplate: Identifiable {
         context.setLineWidth(6)
         context.setLineJoin(.round)
         context.setLineCap(.round)
+        if difficulty == .art {
+            ArtPage.draw(id, in: context)
+            context.restoreGState()
+            return
+        }
         if let animal = PatternAnimal.named(designID) {
             animal.draw(context, style: variation, difficulty: difficulty)
             context.restoreGState()
@@ -101,7 +116,7 @@ struct MandalaTemplate: Identifiable {
             case .easy: count = 4 + variation * 2
             case .medium: count = 10 + variation * 3
             case .hard: count = 20 + variation * 4
-            case .expert: count = 40 + variation * 8
+            case .expert, .art: count = 40 + variation * 8
             }
             let scale = versionFrame(context, variation: variation, count: count,
                                      jewel: difficulty == .easy ? 17 : 10)
@@ -678,7 +693,7 @@ struct PatternAnimal {
         case .easy: spacing = 125
         case .medium: spacing = 62
         case .hard: spacing = 62
-        case .expert: spacing = 46
+        case .expert, .art: spacing = 46
         }
         drawPattern(context, style: style, in: body.boundingBox, center: center, spacing: spacing)
         context.restoreGState()

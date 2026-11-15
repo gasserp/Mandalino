@@ -422,15 +422,22 @@ final class CanvasEngineTests: XCTestCase {
     func testCatalogHasLargeDistinctCollectionsAndEnclosedColorableRegions() {
         XCTAssertGreaterThanOrEqual(MandalaTemplate.all.count, 96)
         XCTAssertEqual(Set(MandalaTemplate.all.map(\.id)).count, MandalaTemplate.all.count)
-        for level in Difficulty.allCases {
+        for level in Difficulty.allCases where level != .art {
             XCTAssertGreaterThanOrEqual(MandalaTemplate.all.filter { $0.difficulty == level }.count, 24)
         }
+        XCTAssertEqual(MandalaTemplate.all.filter { $0.difficulty == .art }.count, 12, "Six mandalas and six animals")
         var outlines = Set<Data>()
         for template in MandalaTemplate.all {
-            let engine = CanvasEngine(template: template, size: template.difficulty == .expert ? 600 : 300,
-                                      restore: false)
+            let detailed = template.difficulty == .expert || template.difficulty == .art
+            let engine = CanvasEngine(template: template, size: detailed ? 600 : 300, restore: false)
             let regions = enclosedRegions(engine)
-            let minimum = template.difficulty == .expert ? 150 : template.difficulty == .easy ? 6 : 15
+            let minimum: Int
+            switch template.difficulty {
+            case .easy: minimum = 6
+            case .medium, .hard: minimum = 15
+            case .expert: minimum = 150
+            case .art: minimum = 40
+            }
             XCTAssertGreaterThanOrEqual(regions, minimum,
                                         "\(template.title) needs meaningful closed coloring spaces")
             XCTAssertTrue(outlines.insert(Data(engine.lines)).inserted,
@@ -596,6 +603,119 @@ final class CanvasEngineTests: XCTestCase {
                 else { try? FileManager.default.removeItem(at: url) }
             }
         }
+    }
+
+    private func pencil(_ engine: CanvasEngine, _ points: [CGPoint]) {
+        engine.beginStroke()
+        for pair in zip(points, points.dropFirst()) {
+            engine.draw(from: pair.0, to: pair.1, tool: .pencil, width: 6)
+        }
+        engine.endStroke()
+    }
+
+    private func arc(from start: CGFloat, to end: CGFloat, radius: CGFloat = 0.3) -> [CGPoint] {
+        (0...80).map { i in
+            let angle = start + (end - start) * CGFloat(i) / 80
+            return CGPoint(x: 0.5 + cos(angle) * radius, y: 0.5 + sin(angle) * radius)
+        }
+    }
+
+    func testPencilLoopWithASmallGapIsClosedSoTheFillStaysInside() {
+        let engine = CanvasEngine(template: nil, size: 300, restore: false)
+        // About 3 % of the page is left open between the end and the start.
+        pencil(engine, arc(from: 0.1, to: 2 * .pi))
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitter: false)
+        XCTAssertEqual(pixel(engine, 0.5, 0.5), [red.red, red.green, red.blue])
+        XCTAssertEqual(pixel(engine, 0.05, 0.05), [255, 255, 255], "The fill must not leak out of the gap")
+        engine.undo()
+        engine.undo()
+        XCTAssertFalse(engine.lines.contains { $0 < 200 }, "One Undo removes the line together with its join")
+    }
+
+    func testPencilLineStoppingShortOfAnotherLineIsJoinedToIt() {
+        let engine = CanvasEngine(template: nil, size: 300, restore: false)
+        box(engine)
+        pencil(engine, [CGPoint(x: 0.2, y: 0.5), CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.785, y: 0.5)])
+        engine.fill(at: CGPoint(x: 0.5, y: 0.3), color: red, glitter: false)
+        XCTAssertEqual(pixel(engine, 0.5, 0.3), [red.red, red.green, red.blue])
+        XCTAssertEqual(pixel(engine, 0.5, 0.7), [255, 255, 255], "The line now splits the box in two")
+    }
+
+    func testOpenPencilShapesStayOpen() {
+        let engine = CanvasEngine(template: nil, size: 300, restore: false)
+        // A letter C: its opening is wide compared with the line, so it is not closed.
+        pencil(engine, arc(from: 0.8, to: 2 * .pi - 0.8))
+        pencil(engine, [CGPoint(x: 0.1, y: 0.9), CGPoint(x: 0.3, y: 0.9)])
+        engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: red, glitter: false)
+        XCTAssertEqual(pixel(engine, 0.05, 0.05), [red.red, red.green, red.blue])
+        XCTAssertGreaterThan(engine.lines[Int(0.9 * 300) * 300 + Int(0.35 * 300)], 240,
+                             "A short line far from others gets nothing added")
+    }
+
+    func testShinyGoldAndSilverPaintWithAMetalSheen() {
+        let gold = PaintColor.palette[40], silver = PaintColor.palette[41]
+        XCTAssertTrue(gold.isMetallic && silver.isMetallic)
+        XCTAssertFalse(PaintColor.palette[25].isMetallic, "The flat Gold stays a plain color")
+        for metal in [gold, silver] {
+            let engine = CanvasEngine(template: nil, size: 300, restore: false)
+            box(engine)
+            engine.fill(at: CGPoint(x: 0.5, y: 0.5), color: metal, glitterStyle: .none)
+            var brightness: [Int] = []
+            for y in stride(from: 0.25, to: 0.75, by: 0.02) {
+                for x in stride(from: 0.25, to: 0.75, by: 0.02) {
+                    let p = pixel(engine, x, y)
+                    XCTAssertNotEqual(p, [255, 255, 255], "Metal paint always counts as colored")
+                    brightness.append(Int(p[0]) + Int(p[1]) + Int(p[2]))
+                }
+            }
+            XCTAssertGreaterThan(brightness.max()! - brightness.min()!, 200, "\(metal.name) shows shadow and shine")
+        }
+    }
+
+    func testFinishedPageGetsItsStarEvenWhenLeftRightAway() throws {
+        let template = try XCTUnwrap(MandalaTemplate.all.first { $0.id == "flower" })
+        UserDefaults.standard.removeObject(forKey: CanvasEngine.finishedPagesKey)
+        var engine: CanvasEngine? = CanvasEngine(template: template, restore: false)
+        let map = SpaceMap(lines: engine!.lines, size: engine!.size)
+        for space in 0..<map.sizes.count {
+            let pixel = try XCTUnwrap(map.labels.firstIndex(of: Int32(space)))
+            engine!.fill(at: CGPoint(x: (CGFloat(pixel % engine!.size) + 0.5) / CGFloat(engine!.size),
+                                     y: (CGFloat(pixel / engine!.size) + 0.5) / CGFloat(engine!.size)),
+                         color: blue, glitterStyle: .none)
+        }
+        engine = nil
+        let starred = NSPredicate { _, _ in
+            (UserDefaults.standard.string(forKey: CanvasEngine.finishedPagesKey) ?? "").split(separator: ",").contains("flower")
+        }
+        wait(for: [expectation(for: starred, evaluatedWith: nil)], timeout: 10)
+        UserDefaults.standard.removeObject(forKey: CanvasEngine.finishedPagesKey)
+    }
+
+    func testPagesFinishedBeforeStarsExistedAreStarredOnce() throws {
+        let template = try XCTUnwrap(MandalaTemplate.all.first { $0.id == "flower-2" })
+        let engine = CanvasEngine(template: template, restore: false)
+        let map = SpaceMap(lines: engine.lines, size: engine.size)
+        for space in 0..<map.sizes.count {
+            let pixel = try XCTUnwrap(map.labels.firstIndex(of: Int32(space)))
+            engine.fill(at: CGPoint(x: (CGFloat(pixel % engine.size) + 0.5) / CGFloat(engine.size),
+                                    y: (CGFloat(pixel / engine.size) + 0.5) / CGFloat(engine.size)),
+                        color: blue, glitterStyle: .none)
+        }
+        engine.save()
+        // Like a page colored with an older version: saved, but never counted.
+        let flushed = expectation(description: "progress counted")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1) { DispatchQueue.main.async { flushed.fulfill() } }
+        wait(for: [flushed], timeout: 5)
+        UserDefaults.standard.removeObject(forKey: CanvasEngine.finishedPagesKey)
+        UserDefaults.standard.removeObject(forKey: "finishedPagesChecked")
+        CanvasEngine.starFinishedPages()
+        let starred = NSPredicate { _, _ in
+            (UserDefaults.standard.string(forKey: CanvasEngine.finishedPagesKey) ?? "").split(separator: ",").contains("flower-2")
+        }
+        wait(for: [expectation(for: starred, evaluatedWith: nil)], timeout: 10)
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: "finishedPagesChecked"))
+        engine.delete()
+        UserDefaults.standard.removeObject(forKey: CanvasEngine.finishedPagesKey)
     }
 
     private func resized(_ image: UIImage) -> UIImage {

@@ -64,7 +64,8 @@ struct ColorMixer: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 10), spacing: 10) {
-                    ForEach(PaintColor.palette) { color in
+                    // Metal paint can't be mixed: its shine would turn into a flat color.
+                    ForEach(PaintColor.palette.filter { !$0.isMetallic }) { color in
                         Button { addDrop(of: color) } label: {
                             Circle().fill(Color(uiColor: color.uiColor))
                                 .overlay { Circle().stroke(Theme.ink.opacity(0.15)) }
