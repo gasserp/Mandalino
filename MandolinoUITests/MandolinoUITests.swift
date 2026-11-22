@@ -1,6 +1,12 @@
 import XCTest
 
 final class MandolinoUITests: XCTestCase {
+    // A failed tap ends a test at once, before its `defer` turns the iPad back upright, so each test
+    // starts in portrait itself instead of inheriting the last test's landscape.
+    override func setUp() {
+        XCUIDevice.shared.orientation = .portrait
+    }
+
     func testMandalasAllLevelsColorSparkleUndoAndShare() {
         let app = XCUIApplication()
         app.launchArguments = ["-UITestEnglish"]
@@ -90,7 +96,10 @@ final class MandolinoUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["template-flower"].waitForExistence(timeout: 10))
         app.buttons["difficulty-hard"].tap()
-        app.buttons["template-lion"].tap()
+        // In landscape the lion row starts below the screen, and the gallery only builds rows near it.
+        let lion = app.buttons["template-lion"]
+        for _ in 0..<5 where !(lion.exists && lion.isHittable) { app.swipeUp(velocity: .slow) }
+        lion.tap()
         let canvas = app.descendants(matching: .any)["drawing-canvas"]
         XCTAssertTrue(canvas.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["color-19"].isHittable)
