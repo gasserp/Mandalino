@@ -793,6 +793,55 @@ final class CanvasEngineTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: CanvasEngine.finishedPagesKey)
     }
 
+    /// A circle whose bottom almost touches a straight line, with a divider above it, so the narrow corners
+    /// left and right of where they nearly meet belong to two different spaces.
+    private func nearlyTouchingCorners() -> CanvasEngine {
+        let engine = CanvasEngine(template: nil, restore: false)
+        for (start, end, tool) in [(CGPoint(x: 0.25, y: 0.2), CGPoint(x: 0.75, y: 0.7), DrawingTool.circle),
+                                   (CGPoint(x: 0, y: 0.7125), CGPoint(x: 1, y: 0.7125), .ruler),
+                                   (CGPoint(x: 0.5, y: 0), CGPoint(x: 0.5, y: 0.2), .ruler)] {
+            engine.beginStroke()
+            engine.draw(from: start, to: end, tool: tool, width: 12)
+            engine.endStroke()
+        }
+        return engine
+    }
+
+    private func isWhite(_ engine: CanvasEngine, _ index: Int) -> Bool {
+        engine.paint[index * 4..<index * 4 + 3].allSatisfy { $0 == 255 }
+    }
+
+    func testFillsReachIntoNarrowCornersWithoutCrossingIntoTheNextSpace() {
+        let engine = nearlyTouchingCorners()
+        let size = engine.size
+        // Where the circle and the line almost meet, in the middle of the page.
+        let corner = (685...730).flatMap { y in (300...700).map { x in y * size + x } }
+        engine.fill(at: CGPoint(x: 0.1, y: 0.5), color: red, glitterStyle: .none)
+        XCTAssertEqual(pixel(engine, 0.9, 0.5), [255, 255, 255], "The space on the other side stays white")
+        let crossed = corner.filter { $0 % size > 503 && !isWhite(engine, $0) }
+        XCTAssertEqual(crossed.map { "(\($0 % size), \($0 / size))" }, [],
+                       "The color stops halfway between the two spaces")
+        engine.fill(at: CGPoint(x: 0.9, y: 0.5), color: blue, glitterStyle: .none)
+        engine.fill(at: CGPoint(x: 0.5, y: 0.45), color: blue, glitterStyle: .none)
+        engine.fill(at: CGPoint(x: 0.5, y: 0.9), color: blue, glitterStyle: .none)
+        let light = corner.filter { engine.lines[$0] >= 120 && isWhite(engine, $0) }
+        XCTAssertEqual(light.map { "(\($0 % size), \($0 / size))" }, [], "No white spot is left in the corners")
+    }
+
+    func testSpecksTooSmallToTapTakeTheColorAroundThem() {
+        let engine = CanvasEngine(template: nil, restore: false)
+        box(engine)
+        // A ring so small that the white inside it is a speck.
+        engine.beginStroke()
+        engine.draw(from: CGPoint(x: 0.495, y: 0.495), to: CGPoint(x: 0.505, y: 0.505), tool: .circle, width: 4)
+        engine.endStroke()
+        let middle = 500 * engine.size + 500
+        XCTAssertGreaterThanOrEqual(engine.lines[middle], 200)
+        engine.fill(at: CGPoint(x: 0.3, y: 0.3), color: red, glitterStyle: .none)
+        XCTAssertEqual(pixel(engine, 0.5, 0.5), [red.red, red.green, red.blue], "The ring's middle is colored too")
+        XCTAssertEqual(pixel(engine, 0.1, 0.1), [255, 255, 255], "The color does not cross the box's line")
+    }
+
     private func resized(_ image: UIImage) -> UIImage {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1

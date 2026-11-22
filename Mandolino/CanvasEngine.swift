@@ -441,6 +441,13 @@ final class CanvasEngine: ObservableObject {
         }
         var queue = [Int32](repeating: 0, count: size * size)
         var visited = [Bool](repeating: false, count: size * size)
+        // For the pixels around a space: how far each is from it (0 = not reached), how far from another
+        // space next to it (0 = not reached, 1 = that space itself), and for white pixels cut off from
+        // it, whether they are a speck (1) or another space (2).
+        var distance = [UInt8](repeating: 0, count: size * size)
+        var rivalDistance = [UInt8](repeating: 0, count: size * size)
+        var speck = [UInt8](repeating: 0, count: size * size)
+        let line = lines
         for seed in seeds where !visited[seed] {
             var count = 0
             var edge: [Int32] = []
@@ -455,12 +462,12 @@ final class CanvasEngine: ObservableObject {
                         q[0] = Int32(seed); seen[seed] = true; count = 1
                         var cursor = 0
                         func visit(_ next: Int) {
-                            guard !seen[next] else { return }
-                            if lineBuffer[next] >= 200 && brush[next] != onBrush { return }
-                            seen[next] = true
+                            guard !seen[next], brush[next] == onBrush else { return }
                             if lineBuffer[next] >= 200 {
+                                seen[next] = true
                                 q[count] = Int32(next); count += 1
-                            } else {
+                            } else if distance[next] == 0 {
+                                distance[next] = 1
                                 edge.append(Int32(next))
                             }
                         }
@@ -474,26 +481,11 @@ final class CanvasEngine: ObservableObject {
                             if py > 0 { visit(index - size) }
                             if py + 1 < size { visit(index + size) }
                         }
-                        // The outline's soft edge pixels are part of the line, so the fill stopped
-                        // before them and they stayed white: a thin light ring between the color and
-                        // the black line. Paint up to two pixels into the outline, but only through
-                        // soft pixels, so the color never crosses the line's dark core. The outline
-                        // is drawn on top, so this shows only at that soft edge.
-                        let firstRing = edge.count
-                        for i in 0..<firstRing {
-                            let index = Int(edge[i])
-                            guard lineBuffer[index] > 40 else { continue }
-                            let px = index % size, py = index / size
-                            for (valid, next) in [(px > 0, index - 1), (px + 1 < size, index + 1),
-                                                  (py > 0, index - size), (py + 1 < size, index + size)]
-                                where valid && !seen[next] && lineBuffer[next] < 200 {
-                                seen[next] = true
-                                edge.append(Int32(next))
-                            }
-                        }
                     }
                 }
             }
+            edge = Self.surroundings(edge, size: size, line: line, brush: brush, onBrush: onBrush, inSpace: visited,
+                                 distance: &distance, rivalDistance: &rivalDistance, speck: &speck)
             let bounds = CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
             let style = glitterStyle.rawValue
             paint.withUnsafeMutableBufferPointer { paintBuffer in
@@ -514,11 +506,124 @@ final class CanvasEngine: ObservableObject {
             }
             if onBrush != 0 && Self.paintsWhite(color, options) {
                 for i in 0..<count { brushMask[Int(queue[i])] = 0 }
+                for index in edge { brushMask[Int(index)] = 0 }
             }
         }
         hint = glitterStyle != .none ? "A little sparkle! Tap another space to keep coloring." : "Lovely! Keep adding your colors."
         changed()
         return true
+    }
+
+    /// How far, in pixels, a fill goes on past its space into the lines and specks around it.
+    static let edgeReach = 32
+
+    /// White areas smaller than this (40 pixels on a page) are specks, too small to tap, that go with
+    /// the space nearest to them.
+    static func speckLimit(size: Int) -> Int { max(1, size * size / 25_000) }
+
+    /// The pixels past a filled space that take its color too, so no white is left between the colors:
+    /// - A line's soft edge pixels are part of the line, so the fill stops before them; left white, they
+    ///   make a light ring between the color and the line.
+    /// - Where two lines meet at a narrow angle, the corner between them is all soft edge, and the last
+    ///   white pixels before its tip are cut off from the space, so the color stopped short of the corner.
+    /// - Specks of white walled in by lines, like the middle of a tiny ring or a chink where lines cross,
+    ///   could never be filled, and some have no white pixel to tap at all.
+    /// So each pixel around the space (line or speck, a speck as a whole) goes to the space nearest to
+    /// it: where two spaces meet, the line between them is split down the middle. A line's far side is
+    /// always nearer to the space there, so color never shows across a line.
+    /// `ring` is the pixels next to the space, each with a `distance` of 1.
+    private static func surroundings(_ ring: [Int32], size: Int, line: [UInt8], brush: [UInt8], onBrush: UInt8,
+                                     inSpace: [Bool], distance: inout [UInt8], rivalDistance: inout [UInt8],
+                                     speck: inout [UInt8]) -> [Int32] {
+        let reach = UInt8(edgeReach), limit = speckLimit(size: size)
+        var band = ring, rivals: [Int32] = [], touched: [Int32] = []
+        var specks: [[Int32]] = [], speckOf: [Int32: Int] = [:]
+        func forEachNeighbor(_ index: Int, _ body: (Int) -> Void) {
+            let x = index % size, y = index / size
+            if x > 0 { body(index - 1) }
+            if x + 1 < size { body(index + 1) }
+            if y > 0 { body(index - size) }
+            if y + 1 < size { body(index + size) }
+        }
+        // Tells a speck (1) from another space (2) by its size, looking no further than the limit.
+        func classify(_ start: Int) {
+            var area = [Int32(start)]
+            speck[start] = 3
+            var cursor = 0
+            while cursor < area.count && area.count < limit {
+                forEachNeighbor(Int(area[cursor])) { next in
+                    if speck[next] == 0 && !inSpace[next] && line[next] >= 200 && brush[next] == onBrush {
+                        speck[next] = 3
+                        area.append(Int32(next))
+                    }
+                }
+                cursor += 1
+            }
+            touched += area
+            if area.count < limit {
+                for index in area { speck[Int(index)] = 1; speckOf[index] = specks.count }
+                specks.append(area)
+            } else {
+                for index in area { speck[Int(index)] = 2 }
+            }
+        }
+        // Outward from the space, twice the reach, so a nearer space next to it is always found.
+        var cursor = 0
+        while cursor < band.count {
+            let index = Int(band[cursor]); cursor += 1
+            let d = distance[index]
+            guard d < reach * 2 else { continue }
+            forEachNeighbor(index) { next in
+                guard distance[next] == 0, !inSpace[next], brush[next] == onBrush else { return }
+                if line[next] < 200 {
+                    distance[next] = d + 1
+                    band.append(Int32(next))
+                    return
+                }
+                if speck[next] == 0 { classify(next) }
+                if speck[next] == 2 {
+                    if rivalDistance[next] == 0 {
+                        rivalDistance[next] = 1
+                        rivals.append(Int32(next))
+                    }
+                } else {
+                    // A speck is reached all at once.
+                    for pixel in specks[speckOf[Int32(next)]!] {
+                        distance[Int(pixel)] = d + 1
+                        band.append(pixel)
+                    }
+                }
+            }
+        }
+        // And outward from the other spaces it met, through the same pixels.
+        cursor = 0
+        while cursor < rivals.count {
+            let index = Int(rivals[cursor]); cursor += 1
+            let d = rivalDistance[index]
+            guard d <= reach else { continue }
+            forEachNeighbor(index) { next in
+                guard distance[next] != 0, rivalDistance[next] == 0 else { return }
+                if speck[next] == 1 {
+                    for pixel in specks[speckOf[Int32(next)]!] {
+                        rivalDistance[Int(pixel)] = d + 1
+                        rivals.append(pixel)
+                    }
+                } else {
+                    rivalDistance[next] = d + 1
+                    rivals.append(Int32(next))
+                }
+            }
+        }
+        // A line's dark core looks black in any color, so it is not painted.
+        var claimed: [Int32] = []
+        for index in band where line[Int(index)] > 40 {
+            let d = distance[Int(index)], rival = rivalDistance[Int(index)]
+            if d <= reach && (rival == 0 || d < rival) { claimed.append(index) }
+        }
+        for index in band + rivals + touched {
+            distance[Int(index)] = 0; rivalDistance[Int(index)] = 0; speck[Int(index)] = 0
+        }
+        return claimed
     }
 
     private static let swatchCache = NSCache<NSString, UIImage>()
